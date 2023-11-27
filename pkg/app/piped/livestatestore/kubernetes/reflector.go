@@ -55,7 +55,6 @@ var (
 		"v1":      {},
 		"v1beta1": {},
 		"v1beta2": {},
-		"v2":      {},
 	}
 	kindWhitelist = map[string]struct{}{
 		"Service":                  {},
