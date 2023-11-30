@@ -200,6 +200,7 @@ spec:
 | replacements | [][EventWatcherReplacement](#eventwatcherreplacement) | List of places where will be replaced when the new event matches. | Yes |
 
 ### EventWatcherReplacement
+
 One of `yamlField` or `regex` is required.
 
 | Field | Type | Description | Required |
@@ -454,6 +455,7 @@ One of `yamlField` or `regex` is required.
 | taskDefinitionFile | string | The path to ECS TaskDefinition configuration file. Allow file in both `yaml` and `json` format. The default value is `taskdef.json`. See [here](https://docs.aws.amazon.com/AmazonECS/latest/developerguide/task_definition_parameters.html) for parameters. | No |
 | targetGroups | [ECSTargetGroupInput](#ecstargetgroupinput) | The target groups configuration, will be used to routing traffic to created task sets. | Yes (if you want to perform progressive delivery) |
 | runStandaloneTask | bool | Run standalone tasks during deployments. About standalone task, see [here](https://docs.aws.amazon.com/AmazonECS/latest/userguide/ecs_run_task-v2.html). The default value is `true`. |
+| accessType | string | How the ECS service is accessed. One of `ELB` or `SERVICE_DISCOVERY`. See examples [here](https://github.com/pipe-cd/examples/tree/master/ecs/servicediscovery/simple). The default value is `ELB`. |
 
 ### ECSTargetGroupInput
 
@@ -495,7 +497,6 @@ Note: The available values are identical to those found in the aws-sdk-go-v2 Typ
 | primaryArgs | map[string][string] | The custom arguments to be populated for the Primary query. They can be reffered as `{{ .VariantCustomArgs.xxx }}`. | No |
 | timeout | duration | How long after which the query times out. | No |
 | template | [AnalysisTemplateRef](#analysistemplateref) | Reference to the template to be used. | No |
-
 
 ### AnalysisExpected
 
@@ -562,6 +563,7 @@ Note: The available values are identical to those found in the aws-sdk-go-v2 Typ
 | | | | |
 
 ### KubernetesTrafficRoutingStageOptions
+
 This stage routes traffic with the method specified in [KubernetesTrafficRouting](#kubernetestrafficrouting).
 When using `podselector` method as a traffic routing method, routing is done by updating the Service selector.
 Therefore, note that all traffic will be routed to the primary if the the primary variant's service is rolled out by running the `K8S_PRIMARY_ROLLOUT` stage.
@@ -644,6 +646,7 @@ Note: By default, the sum of traffic is rounded to 100. If both `primary` and `c
 | minApproverNum | int | Number of minimum needed approvals to make this stage complete. Default is 1. | No |
 
 ### CustomSyncStageOptions
+
 | Field | Type | Description | Required |
 |-|-|-|-|
 | timeout | duration | The maximum time the stage can be taken to run. Default is `6h`| No |
@@ -706,6 +709,7 @@ Note: By default, the sum of traffic is rounded to 100. If both `primary` and `c
 ## PipeCD rich defined types
 
 ### Percentage
+
 A wrapper of type `int` to represent percentage data. Basically, you can pass `10` or `"10"` or `10%` and they will be treated as `10%` in PipeCD.
 
 ### KubernetesResourcePatch
