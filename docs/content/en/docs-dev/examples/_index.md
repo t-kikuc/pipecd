@@ -11,7 +11,7 @@ One of the best ways to see what PipeCD can do, and learn how to deploy your app
 We have prepared some examples for each kind of application.
 The examples can be found at the following repository:
 
-<https://github.com/pipe-cd/examples>
+https://github.com/pipe-cd/examples
 
 ### Kubernetes Applications
 
@@ -84,6 +84,7 @@ The examples can be found at the following repository:
 | [secret-management](https://github.com/pipe-cd/examples/tree/master/ecs/secret-management) | Demonstrate how to manage sensitive data by using [Secret Management](../user-guide/managing-application/secret-management/) feature. |
 | [wait-approval](https://github.com/pipe-cd/examples/tree/master/ecs/wait-approval) | Deployment pipeline that contains a manual approval stage. |
 | [standalone-task](https://github.com/pipe-cd/examples/tree/master/ecs/standalone-task) | Deployment Standalone Task. (`Standalone task is only supported for Quick sync`) |
+
 
 ### Deployment chain
 
