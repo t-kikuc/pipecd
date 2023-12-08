@@ -44,7 +44,8 @@ spec:
 
 Kubernetes resources can be managed by some annotations provided by PipeCD.
 
-| Annotation key | Target resource(es) | Possible values | Description |
+| Annotation key | Target resource(s) | Possible values | Description |
+|-|-|-|-|
 | `pipecd.dev/ignore-drift-detection` | any | "true" | Whether the drift detection should ignore this resource. |
 | `pipecd.dev/server-side-apply` | any | "true" | Use server side apply instead of client side apply. |
 
@@ -332,6 +333,7 @@ One of `yamlField` or `regex` is required.
 | Field | Type | Description | Required |
 |-|-|-|-|
 | releaseName | string | The release name of helm deployment. By default, the release name is equal to the application name. | No |
+| setValues | map[string]string | List of values. | No |
 | valueFiles | []string | List of value files should be loaded. Only local files stored under the application directory or remote files served at the http(s) endpoint are allowed. | No |
 | setFiles | map[string]string | List of file path for values. | No |
 | apiVersions | []string | Kubernetes api versions used for Capabilities.APIVersions. | No |
@@ -479,6 +481,7 @@ Note: The available values are identical to those found in the aws-sdk-go-v2 Typ
 
 | Field | Type | Description | Required |
 |-|-|-|-|
+| recreate | bool | Whether to delete old tasksets before creating new ones or not. Default to false. | No |
 
 ## AnalysisMetrics
 
