@@ -39,7 +39,9 @@ jobs:
           cd docs
           npm install autoprefixer
           npm install postcss-cli
-          grep '^tag:' RELEASE | awk '{print $2}'
+          ls
+          ls ../
+          grep '^tag:' ../RELEASE | awk '{print $2}'
           env HUGO_ENV="production" RELEASE="$(grep '^tag:' ../RELEASE | awk '{print $2}')" hugo
 
       # Building and pushing container images.
