@@ -15,6 +15,7 @@
 package config
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -41,6 +42,7 @@ func TestKubernetesApplicationConfig(t *testing.T) {
 					Description: "application description first string\napplication description second string\n",
 					Planner: DeploymentPlanner{
 						AlwaysUsePipeline: true,
+						AutoRollback:      newBoolPointer(true),
 					},
 					Pipeline: &DeploymentPipeline{
 						Stages: []PipelineStage{
@@ -52,6 +54,7 @@ func TestKubernetesApplicationConfig(t *testing.T) {
 										IsPercentage: true,
 									},
 								},
+								With: json.RawMessage(`{"replicas":"100%"}`),
 							},
 							{
 								Name: model.StageK8sTrafficRouting,
@@ -60,6 +63,7 @@ func TestKubernetesApplicationConfig(t *testing.T) {
 										Number: 100,
 									},
 								},
+								With: json.RawMessage(`{"canary":100}`),
 							},
 							{
 								Name:                          model.StageK8sPrimaryRollout,
@@ -72,6 +76,7 @@ func TestKubernetesApplicationConfig(t *testing.T) {
 										Number: 100,
 									},
 								},
+								With: json.RawMessage(`{"primary":100}`),
 							},
 							{
 								Name:                       model.StageK8sCanaryClean,
@@ -132,6 +137,9 @@ func TestKubernetesApplicationConfig(t *testing.T) {
 						OnChain: OnChain{
 							Disabled: newBoolPointer(true),
 						},
+					},
+					Planner: DeploymentPlanner{
+						AutoRollback: newBoolPointer(true),
 					},
 				},
 				Input: KubernetesDeploymentInput{

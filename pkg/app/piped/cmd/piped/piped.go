@@ -33,9 +33,16 @@ import (
 	secretmanagerpb "cloud.google.com/go/secretmanager/apiv1/secretmanagerpb"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	awssecretsmanager "github.com/aws/aws-sdk-go-v2/service/secretsmanager"
+	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/spf13/cobra"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc/credentials"
@@ -99,6 +106,7 @@ type piped struct {
 	addLoginUserToPasswd                 bool
 	launcherVersion                      string
 	maxRecvMsgSize                       int
+	appManifestCacheCount                int
 }
 
 func NewCommand() *cobra.Command {
@@ -107,10 +115,11 @@ func NewCommand() *cobra.Command {
 		panic(fmt.Sprintf("failed to detect the current user's home directory: %v", err))
 	}
 	p := &piped{
-		adminPort:      9085,
-		toolsDir:       path.Join(home, ".piped", "tools"),
-		gracePeriod:    30 * time.Second,
-		maxRecvMsgSize: 1024 * 1024 * 10, // 10MB
+		adminPort:             9085,
+		toolsDir:              path.Join(home, ".piped", "tools"),
+		gracePeriod:           30 * time.Second,
+		maxRecvMsgSize:        1024 * 1024 * 10, // 10MB
+		appManifestCacheCount: 150,
 	}
 	cmd := &cobra.Command{
 		Use:   "piped",
@@ -131,6 +140,7 @@ func NewCommand() *cobra.Command {
 	cmd.Flags().BoolVar(&p.enableDefaultKubernetesCloudProvider, "enable-default-kubernetes-cloud-provider", p.enableDefaultKubernetesCloudProvider, "Whether the default kubernetes provider is enabled or not. This feature is deprecated.")
 	cmd.Flags().BoolVar(&p.addLoginUserToPasswd, "add-login-user-to-passwd", p.addLoginUserToPasswd, "Whether to add login user to $HOME/passwd. This is typically for applications running as a random user ID.")
 	cmd.Flags().DurationVar(&p.gracePeriod, "grace-period", p.gracePeriod, "How long to wait for graceful shutdown.")
+	cmd.Flags().IntVar(&p.appManifestCacheCount, "app-manifest-cache-count", p.appManifestCacheCount, "The number of app manifests to cache. The cache-key contains the commit hash. The default is 150.")
 
 	cmd.Flags().StringVar(&p.launcherVersion, "launcher-version", p.launcherVersion, "The version of launcher which initialized this Piped.")
 
@@ -227,6 +237,19 @@ func (p *piped) run(ctx context.Context, input cli.Input) (runErr error) {
 		return err
 	}
 
+	// if control plane's flag monitoring.enabled is false, otel provider logs errors.
+	// it's no problem but we don't want to see it.
+	// so we discard the errors and the logs.
+	otel.SetErrorHandler(otel.ErrorHandlerFunc(func(err error) {}))
+	otel.SetLogger(logr.Discard())
+
+	tracerProvider, err := p.createTracerProvider(ctx, cfg.APIAddress, cfg.ProjectID, cfg.PipedID, pipedKey)
+	if err != nil {
+		input.Logger.Error("failed to create tracer provider", zap.Error(err))
+		return err
+	}
+	otel.SetTracerProvider(tracerProvider)
+
 	// Send the newest piped meta to the control-plane.
 	if err := p.sendPipedMeta(ctx, apiClient, cfg, input.Logger); err != nil {
 		input.Logger.Error("failed to report piped meta to control-plane", zap.Error(err))
@@ -275,11 +298,18 @@ func (p *piped) run(ctx context.Context, input cli.Input) (runErr error) {
 		})
 	}
 
+	password, err := cfg.Git.DecodedPassword()
+	if err != nil {
+		input.Logger.Error("failed to decode password", zap.Error(err))
+		return err
+	}
+
 	// Initialize git client.
 	gitOptions := []git.Option{
 		git.WithUserName(cfg.Git.Username),
 		git.WithEmail(cfg.Git.Email),
 		git.WithLogger(input.Logger),
+		git.WithPassword(password),
 	}
 	for _, repo := range cfg.GitHelmChartRepositories() {
 		if f := repo.SSHKeyFile; f != "" {
@@ -344,7 +374,11 @@ func (p *piped) run(ctx context.Context, input cli.Input) (runErr error) {
 	analysisResultStore := analysisresultstore.NewStore(apiClient, input.Logger)
 
 	// Create memory caches.
-	appManifestsCache := memorycache.NewTTLCache(ctx, time.Hour, time.Minute)
+	appManifestsCache, err := memorycache.NewLRUCache(p.appManifestCacheCount)
+	if err != nil {
+		input.Logger.Error("failed to create app manifests cache", zap.Error(err))
+		return err
+	}
 
 	var liveStateGetter livestatestore.Getter
 	// Start running application live state store.
@@ -455,12 +489,19 @@ func (p *piped) run(ctx context.Context, input cli.Input) (runErr error) {
 
 	// Start running planpreview handler.
 	{
+		// Decode password for plan-preview feature.
+		password, err := cfg.Git.DecodedPassword()
+		if err != nil {
+			input.Logger.Error("failed to decode password", zap.Error(err))
+			return err
+		}
 		// Initialize a dedicated git client for plan-preview feature.
 		// Basically, this feature is an utility so it should not share any resource with the main components of piped.
 		gc, err := git.NewClient(
 			git.WithUserName(cfg.Git.Username),
 			git.WithEmail(cfg.Git.Email),
 			git.WithLogger(input.Logger),
+			git.WithPassword(password),
 		)
 		if err != nil {
 			input.Logger.Error("failed to initialize git client for plan-preview", zap.Error(err))
@@ -574,6 +615,62 @@ func (p *piped) createAPIClient(ctx context.Context, address, projectID, pipedID
 		return nil, err
 	}
 	return client, nil
+}
+
+// createTracerProvider makes a OpenTelemetry Trace's TracerProvider.
+func (p *piped) createTracerProvider(ctx context.Context, address, projectID, pipedID string, pipedKey []byte) (trace.TracerProvider, error) {
+	options := []otlptracegrpc.Option{
+		otlptracegrpc.WithEndpoint(address),
+		otlptracegrpc.WithHeaders(map[string]string{
+			"authorization": "Bearer " + rpcauth.MakePipedToken(projectID, pipedID, string(pipedKey)),
+		}),
+	}
+
+	if !p.insecure {
+		if p.certFile != "" {
+			creds, err := credentials.NewClientTLSFromFile(p.certFile, "")
+			if err != nil {
+				return nil, fmt.Errorf("failed to load client TLS credentials: %w", err)
+			}
+			options = append(options, otlptracegrpc.WithTLSCredentials(creds))
+		} else {
+			config := &tls.Config{}
+			options = append(options, otlptracegrpc.WithTLSCredentials(credentials.NewTLS(config)))
+		}
+	} else {
+		options = append(options, otlptracegrpc.WithInsecure())
+	}
+
+	otlpTraceExporter, err := otlptracegrpc.New(ctx, options...)
+	if err != nil {
+		return nil, err
+	}
+
+	otlpResource, err := resource.New(ctx, resource.WithAttributes(
+		// Set common attributes for all spans.
+		attribute.String("service.name", "piped"),
+		attribute.String("service.version", version.Get().Version),
+		attribute.String("service.namespace", projectID),
+		attribute.String("service.instance.id", pipedID),
+
+		// Set the project and piped IDs as attributes.
+		attribute.String("project-id", projectID),
+		attribute.String("piped-id", pipedID),
+	))
+	if err != nil {
+		return nil, err
+	}
+
+	otlpResource, err = resource.Merge(resource.Default(), otlpResource) // the later one has higher priority
+	if err != nil {
+		return nil, err
+	}
+
+	return sdktrace.NewTracerProvider(
+		sdktrace.WithResource(otlpResource),
+		sdktrace.WithBatcher(otlpTraceExporter),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+	), nil
 }
 
 // loadConfig reads the Piped configuration data from the specified source.

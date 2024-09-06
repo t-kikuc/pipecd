@@ -146,10 +146,10 @@ Must be one of the following objects:
 | Field | Type | Description | Required |
 |-|-|-|-|
 | name | string | The unique name of the configuration. | Yes |
-| provider | string | The SSO service provider. Can be one of the following values<br>`GITHUB`, `GOOGLE`... | Yes |
+| provider | string | The SSO service provider. Currently, only `GITHUB` and `OIDC` is supported. | Yes |
 | sessionTtl | int | The time to live of session for SSO login. Unit is `hour`. Default is 7 * 24 hours. | No |
 | github | [SSOConfigGitHub](#ssoconfiggithub) | GitHub sso configuration. | No |
-| google | [SSOConfigGoogle](#ssoconfiggoogle) | Google sso configuration. | No |
+| oidc | [SSOConfigOIDC](#ssoconfigoidc) | OIDC sso configuration. | No |
 
 ## SSOConfigGitHub
 
@@ -161,9 +161,16 @@ Must be one of the following objects:
 | uploadUrl | string | The upload url of GitHub service. | No |
 | proxyUrl | string | The address of the proxy used while communicating with the GitHub service. | No |
 
-## SSOConfigGoogle
+## SSOConfigOIDC
 
 | Field | Type | Description | Required |
 |-|-|-|-|
-| clientId | string | The client id string of Google oauth app. | Yes |
-| clientSecret | string | The client secret string of Google oauth app. | Yes |
+| clientId | string | The client id string of OpenID Connect oauth app. | Yes |
+| clientSecret | string | The client secret string of OpenID Connect oauth app. | Yes |
+| issuer | string | The address of OpenID Connect service. | Yes |
+| redirectUri | string | The address of the redirect URI. | Yes |
+| authorizationEndpoint | string | The address of the authorization endpoint. | No |
+| tokenEndpoint | string | The address of the token endpoint. | No |
+| userInfoEndpoint | string | The address of the user info endpoint. | No |
+| proxyUrl | string | The address of the proxy used while communicating with the OpenID Connect service. | No |
+| scopes | []string | Scopes to request from the OpenID Connect service. Default is `openid`. Some providers may require other scopes. | No |

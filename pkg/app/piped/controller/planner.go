@@ -21,6 +21,10 @@ import (
 	"path/filepath"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 
@@ -57,6 +61,7 @@ type planner struct {
 	pipedConfig                  *config.PipedSpec
 	appManifestsCache            cache.Cache
 	logger                       *zap.Logger
+	tracer                       trace.Tracer
 
 	done                 atomic.Bool
 	doneTimestamp        time.Time
@@ -106,6 +111,7 @@ func newPlanner(
 		cancelledCh:                  make(chan *model.ReportableCommand, 1),
 		nowFunc:                      time.Now,
 		logger:                       logger,
+		tracer:                       otel.GetTracerProvider().Tracer("controller/planner"),
 	}
 	return p
 }
@@ -149,6 +155,16 @@ func (p *planner) Run(ctx context.Context) error {
 		p.doneTimestamp = p.nowFunc()
 		p.done.Store(true)
 	}()
+
+	ctx, span := p.tracer.Start(
+		newContextWithDeploymentSpan(ctx, p.deployment),
+		"Plan",
+		trace.WithAttributes(
+			attribute.String("application-id", p.deployment.ApplicationId),
+			attribute.String("kind", p.deployment.Kind.String()),
+			attribute.String("deployment-id", p.deployment.Id),
+		))
+	defer span.End()
 
 	repoCfg := config.PipedRepository{
 		RepoID: p.deployment.GitPath.Repo.Id,
@@ -207,6 +223,7 @@ func (p *planner) Run(ctx context.Context) error {
 		if cmd != nil {
 			p.doneDeploymentStatus = model.DeploymentStatus_DEPLOYMENT_CANCELLED
 			desc := fmt.Sprintf("Deployment was cancelled by %s while planning", cmd.Commander)
+			span.SetStatus(codes.Error, desc)
 			p.reportDeploymentCancelled(ctx, cmd.Commander, desc)
 			return cmd.Report(ctx, model.CommandStatus_COMMAND_SUCCEEDED, nil, nil)
 		}
@@ -215,9 +232,11 @@ func (p *planner) Run(ctx context.Context) error {
 
 	if err != nil {
 		p.doneDeploymentStatus = model.DeploymentStatus_DEPLOYMENT_FAILURE
+		span.SetStatus(codes.Error, err.Error())
 		return p.reportDeploymentFailed(ctx, fmt.Sprintf("Unable to plan the deployment (%v)", err))
 	}
 
+	span.SetStatus(codes.Ok, "The deployment has been planned")
 	p.doneDeploymentStatus = model.DeploymentStatus_DEPLOYMENT_PLANNED
 	return p.reportDeploymentPlanned(ctx, out)
 }
@@ -240,10 +259,7 @@ func (p *planner) reportDeploymentPlanned(ctx context.Context, out pln.Output) e
 		}
 	)
 
-	accounts, err := p.getMentionedAccounts(model.NotificationEventType_EVENT_DEPLOYMENT_PLANNED)
-	if err != nil {
-		p.logger.Error("failed to get the list of accounts", zap.Error(err))
-	}
+	users, groups, err := p.getApplicationNotificationMentions(model.NotificationEventType_EVENT_DEPLOYMENT_PLANNED)
 
 	defer func() {
 		p.notifier.Notify(model.NotificationEvent{
@@ -251,7 +267,8 @@ func (p *planner) reportDeploymentPlanned(ctx context.Context, out pln.Output) e
 			Metadata: &model.NotificationEventDeploymentPlanned{
 				Deployment:        p.deployment,
 				Summary:           out.Summary,
-				MentionedAccounts: accounts,
+				MentionedAccounts: users,
+				MentionedGroups:   groups,
 			},
 		})
 	}()
@@ -285,9 +302,9 @@ func (p *planner) reportDeploymentFailed(ctx context.Context, reason string) err
 		retry = pipedservice.NewRetry(10)
 	)
 
-	accounts, err := p.getMentionedAccounts(model.NotificationEventType_EVENT_DEPLOYMENT_FAILED)
+	users, groups, err := p.getApplicationNotificationMentions(model.NotificationEventType_EVENT_DEPLOYMENT_FAILED)
 	if err != nil {
-		p.logger.Error("failed to get the list of accounts", zap.Error(err))
+		p.logger.Error("failed to get the list of users or groups", zap.Error(err))
 	}
 
 	defer func() {
@@ -296,7 +313,8 @@ func (p *planner) reportDeploymentFailed(ctx context.Context, reason string) err
 			Metadata: &model.NotificationEventDeploymentFailed{
 				Deployment:        p.deployment,
 				Reason:            reason,
-				MentionedAccounts: accounts,
+				MentionedAccounts: users,
+				MentionedGroups:   groups,
 			},
 		})
 	}()
@@ -330,9 +348,9 @@ func (p *planner) reportDeploymentCancelled(ctx context.Context, commander, reas
 		retry = pipedservice.NewRetry(10)
 	)
 
-	accounts, err := p.getMentionedAccounts(model.NotificationEventType_EVENT_DEPLOYMENT_CANCELLED)
+	users, groups, err := p.getApplicationNotificationMentions(model.NotificationEventType_EVENT_DEPLOYMENT_CANCELLED)
 	if err != nil {
-		p.logger.Error("failed to get the list of accounts", zap.Error(err))
+		p.logger.Error("failed to get the list of users or groups", zap.Error(err))
 	}
 
 	defer func() {
@@ -341,7 +359,8 @@ func (p *planner) reportDeploymentCancelled(ctx context.Context, commander, reas
 			Metadata: &model.NotificationEventDeploymentCancelled{
 				Deployment:        p.deployment,
 				Commander:         commander,
-				MentionedAccounts: accounts,
+				MentionedAccounts: users,
+				MentionedGroups:   groups,
 			},
 		})
 	}()
@@ -359,16 +378,17 @@ func (p *planner) reportDeploymentCancelled(ctx context.Context, commander, reas
 	return err
 }
 
-func (p *planner) getMentionedAccounts(event model.NotificationEventType) ([]string, error) {
+// getApplicationNotificationMentions returns the list of users groups who should be mentioned in the notification.
+func (p *planner) getApplicationNotificationMentions(event model.NotificationEventType) ([]string, []string, error) {
 	n, ok := p.metadataStore.Shared().Get(model.MetadataKeyDeploymentNotification)
 	if !ok {
-		return []string{}, nil
+		return []string{}, []string{}, nil
 	}
 
 	var notification config.DeploymentNotification
 	if err := json.Unmarshal([]byte(n), &notification); err != nil {
-		return nil, fmt.Errorf("could not extract mentions config: %w", err)
+		return nil, nil, fmt.Errorf("could not extract mentions config: %w", err)
 	}
 
-	return notification.FindSlackAccounts(event), nil
+	return notification.FindSlackUsers(event), notification.FindSlackGroups(event), nil
 }

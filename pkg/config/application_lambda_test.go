@@ -15,6 +15,7 @@
 package config
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -54,6 +55,9 @@ func TestLambdaApplicationConfig(t *testing.T) {
 							Disabled: newBoolPointer(true),
 						},
 					},
+					Planner: DeploymentPlanner{
+						AutoRollback: newBoolPointer(true),
+					},
 				},
 				Input: LambdaDeploymentInput{
 					FunctionManifestFile: "function.yaml",
@@ -83,6 +87,7 @@ func TestLambdaApplicationConfig(t *testing.T) {
 										HasSuffix: false,
 									},
 								},
+								With: json.RawMessage(`{"percent":10}`),
 							},
 							{
 								Name: model.StageLambdaPromote,
@@ -92,6 +97,7 @@ func TestLambdaApplicationConfig(t *testing.T) {
 										HasSuffix: false,
 									},
 								},
+								With: json.RawMessage(`{"percent":100}`),
 							},
 						},
 					},
@@ -103,6 +109,9 @@ func TestLambdaApplicationConfig(t *testing.T) {
 						OnChain: OnChain{
 							Disabled: newBoolPointer(true),
 						},
+					},
+					Planner: DeploymentPlanner{
+						AutoRollback: newBoolPointer(true),
 					},
 				},
 				Input: LambdaDeploymentInput{
@@ -133,6 +142,7 @@ func TestLambdaApplicationConfig(t *testing.T) {
 										HasSuffix: false,
 									},
 								},
+								With: json.RawMessage(`{"percent":100}`),
 							},
 						},
 					},
@@ -144,6 +154,9 @@ func TestLambdaApplicationConfig(t *testing.T) {
 						OnChain: OnChain{
 							Disabled: newBoolPointer(true),
 						},
+					},
+					Planner: DeploymentPlanner{
+						AutoRollback: newBoolPointer(true),
 					},
 				},
 				Input: LambdaDeploymentInput{

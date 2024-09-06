@@ -26,7 +26,9 @@ import (
 	"google.golang.org/grpc"
 
 	"github.com/pipe-cd/pipecd/pkg/app/piped/livestatereporter/cloudrun"
+	"github.com/pipe-cd/pipecd/pkg/app/piped/livestatereporter/ecs"
 	"github.com/pipe-cd/pipecd/pkg/app/piped/livestatereporter/kubernetes"
+	"github.com/pipe-cd/pipecd/pkg/app/piped/livestatereporter/lambda"
 	"github.com/pipe-cd/pipecd/pkg/app/piped/livestatestore"
 	"github.com/pipe-cd/pipecd/pkg/app/server/service/pipedservice"
 	"github.com/pipe-cd/pipecd/pkg/config"
@@ -79,6 +81,20 @@ func NewReporter(appLister applicationLister, stateGetter livestatestore.Getter,
 				continue
 			}
 			r.reporters = append(r.reporters, cloudrun.NewReporter(cp, appLister, sg, apiClient, logger))
+		case model.PlatformProviderECS:
+			sg, ok := stateGetter.ECSGetter(cp.Name)
+			if !ok {
+				r.logger.Error(fmt.Sprintf(errFmt, cp.Name))
+				continue
+			}
+			r.reporters = append(r.reporters, ecs.NewReporter(cp, appLister, sg, apiClient, logger))
+		case model.PlatformProviderLambda:
+			sg, ok := stateGetter.LambdaGetter(cp.Name)
+			if !ok {
+				r.logger.Error(fmt.Sprintf(errFmt, cp.Name))
+				continue
+			}
+			r.reporters = append(r.reporters, lambda.NewReporter(cp, appLister, sg, apiClient, logger))
 		}
 	}
 

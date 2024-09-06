@@ -22,16 +22,19 @@ import (
 	"path/filepath"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 
 	"github.com/pipe-cd/pipecd/pkg/app/pipedv1/controller/controllermetrics"
 	"github.com/pipe-cd/pipecd/pkg/app/pipedv1/deploysource"
 	"github.com/pipe-cd/pipecd/pkg/app/pipedv1/executor"
-	"github.com/pipe-cd/pipecd/pkg/app/pipedv1/executor/registry"
+	registry "github.com/pipe-cd/pipecd/pkg/app/pipedv1/executor/registry"
 	"github.com/pipe-cd/pipecd/pkg/app/pipedv1/logpersister"
 	"github.com/pipe-cd/pipecd/pkg/app/pipedv1/metadatastore"
-	pln "github.com/pipe-cd/pipecd/pkg/app/pipedv1/planner"
 	"github.com/pipe-cd/pipecd/pkg/app/server/service/pipedservice"
 	"github.com/pipe-cd/pipecd/pkg/cache"
 	"github.com/pipe-cd/pipecd/pkg/config"
@@ -48,7 +51,6 @@ type scheduler struct {
 	gitClient           gitClient
 	commandLister       commandLister
 	applicationLister   applicationLister
-	liveResourceLister  liveResourceLister
 	analysisResultStore analysisResultStore
 	logPersister        logpersister.Persister
 	metadataStore       metadatastore.MetadataStore
@@ -57,6 +59,7 @@ type scheduler struct {
 	pipedConfig         *config.PipedSpec
 	appManifestsCache   cache.Cache
 	logger              *zap.Logger
+	tracer              trace.Tracer
 
 	targetDSP  deploysource.Provider
 	runningDSP deploysource.Provider
@@ -85,7 +88,6 @@ func newScheduler(
 	gitClient gitClient,
 	commandLister commandLister,
 	applicationLister applicationLister,
-	liveResourceLister liveResourceLister,
 	analysisResultStore analysisResultStore,
 	lp logpersister.Persister,
 	notifier notifier,
@@ -110,7 +112,6 @@ func newScheduler(
 		gitClient:            gitClient,
 		commandLister:        commandLister,
 		applicationLister:    applicationLister,
-		liveResourceLister:   liveResourceLister,
 		analysisResultStore:  analysisResultStore,
 		logPersister:         lp,
 		metadataStore:        metadatastore.NewMetadataStore(apiClient, d),
@@ -121,6 +122,7 @@ func newScheduler(
 		doneDeploymentStatus: d.Status,
 		cancelledCh:          make(chan *model.ReportableCommand, 1),
 		logger:               logger,
+		tracer:               otel.GetTracerProvider().Tracer("controller/scheduler"),
 		nowFunc:              time.Now,
 	}
 
@@ -255,14 +257,33 @@ func (s *scheduler) Run(ctx context.Context) error {
 		*s.deployment.GitPath,
 		nil,
 	)
-	ds, err := configDSP.GetReadOnly(ctx, io.Discard)
+	ds, err := configDSP.Get(ctx, io.Discard)
 	if err != nil {
 		deploymentStatus = model.DeploymentStatus_DEPLOYMENT_FAILURE
 		statusReason = fmt.Sprintf("Unable to prepare application configuration source data at target commit (%v)", err)
 		s.reportDeploymentCompleted(ctx, deploymentStatus, statusReason, "")
 		return err
 	}
-	s.genericApplicationConfig = ds.GenericApplicationConfig
+	s.genericApplicationConfig = *ds.GenericApplicationConfig
+
+	ctx, span := s.tracer.Start(
+		newContextWithDeploymentSpan(ctx, s.deployment),
+		"Deploy",
+		trace.WithAttributes(
+			attribute.String("application-id", s.deployment.ApplicationId),
+			attribute.String("kind", s.deployment.Kind.String()),
+			attribute.String("deployment-id", s.deployment.Id),
+		))
+	defer span.End()
+
+	defer func() {
+		switch deploymentStatus {
+		case model.DeploymentStatus_DEPLOYMENT_SUCCESS:
+			span.SetStatus(codes.Ok, statusReason)
+		case model.DeploymentStatus_DEPLOYMENT_FAILURE, model.DeploymentStatus_DEPLOYMENT_CANCELLED:
+			span.SetStatus(codes.Error, statusReason)
+		}
+	}()
 
 	timer := time.NewTimer(s.genericApplicationConfig.Timeout.Duration())
 	defer timer.Stop()
@@ -297,9 +318,25 @@ func (s *scheduler) Run(ctx context.Context) error {
 		)
 
 		go func() {
+			_, span := s.tracer.Start(ctx, ps.Name, trace.WithAttributes(
+				attribute.String("application-id", s.deployment.ApplicationId),
+				attribute.String("kind", s.deployment.Kind.String()),
+				attribute.String("deployment-id", s.deployment.Id),
+				attribute.String("stage-id", ps.Id),
+			))
+			defer span.End()
+
 			result = s.executeStage(sig, *ps, func(in executor.Input) (executor.Executor, bool) {
 				return s.executorRegistry.Executor(model.Stage(ps.Name), in)
 			})
+
+			switch result {
+			case model.StageStatus_STAGE_SUCCESS:
+				span.SetStatus(codes.Ok, statusReason)
+			case model.StageStatus_STAGE_FAILURE, model.StageStatus_STAGE_CANCELLED:
+				span.SetStatus(codes.Error, statusReason)
+			}
+
 			close(doneCh)
 		}()
 
@@ -385,9 +422,26 @@ func (s *scheduler) Run(ctx context.Context) error {
 				go func() {
 					rbs := *stage
 					rbs.Requires = []string{lastStage.Id}
-					s.executeStage(sig, rbs, func(in executor.Input) (executor.Executor, bool) {
+
+					_, span := s.tracer.Start(ctx, rbs.Name, trace.WithAttributes(
+						attribute.String("application-id", s.deployment.ApplicationId),
+						attribute.String("kind", s.deployment.Kind.String()),
+						attribute.String("deployment-id", s.deployment.Id),
+						attribute.String("stage-id", rbs.Id),
+					))
+					defer span.End()
+
+					result := s.executeStage(sig, rbs, func(in executor.Input) (executor.Executor, bool) {
 						return s.executorRegistry.RollbackExecutor(s.deployment.Kind, in)
 					})
+
+					switch result {
+					case model.StageStatus_STAGE_SUCCESS:
+						span.SetStatus(codes.Ok, statusReason)
+					case model.StageStatus_STAGE_FAILURE, model.StageStatus_STAGE_CANCELLED:
+						span.SetStatus(codes.Error, statusReason)
+					}
+
 					close(doneCh)
 				}()
 
@@ -475,7 +529,7 @@ func (s *scheduler) executeStage(sig executor.StopSignal, ps model.PipelineStage
 	var stageConfig config.PipelineStage
 	var stageConfigFound bool
 	if ps.Predefined {
-		stageConfig, stageConfigFound = pln.GetPredefinedStage(ps.Id)
+		// FIXME: stageConfig, stageConfigFound = pln.GetPredefinedStage(ps.Id)
 	} else {
 		stageConfig, stageConfigFound = s.genericApplicationConfig.GetStage(ps.Index)
 	}
@@ -500,32 +554,26 @@ func (s *scheduler) executeStage(sig executor.StopSignal, ps model.PipelineStage
 		deploymentID: s.deployment.Id,
 		stageID:      ps.Id,
 	}
-	alrLister := appLiveResourceLister{
-		lister:           s.liveResourceLister,
-		platformProvider: app.PlatformProvider,
-		appID:            app.Id,
-	}
 	aStore := appAnalysisResultStore{
 		store:         s.analysisResultStore,
 		applicationID: app.Id,
 	}
 	input := executor.Input{
-		Stage:                 &ps,
-		StageConfig:           stageConfig,
-		Deployment:            s.deployment,
-		Application:           app,
-		PipedConfig:           s.pipedConfig,
-		TargetDSP:             s.targetDSP,
-		RunningDSP:            s.runningDSP,
-		GitClient:             s.gitClient,
-		CommandLister:         cmdLister,
-		LogPersister:          lp,
-		MetadataStore:         s.metadataStore,
-		AppManifestsCache:     s.appManifestsCache,
-		AppLiveResourceLister: alrLister,
-		AnalysisResultStore:   aStore,
-		Logger:                s.logger,
-		Notifier:              s.notifier,
+		Stage:               &ps,
+		StageConfig:         stageConfig,
+		Deployment:          s.deployment,
+		Application:         app,
+		PipedConfig:         s.pipedConfig,
+		TargetDSP:           s.targetDSP,
+		RunningDSP:          s.runningDSP,
+		GitClient:           s.gitClient,
+		CommandLister:       cmdLister,
+		LogPersister:        lp,
+		MetadataStore:       s.metadataStore,
+		AppManifestsCache:   s.appManifestsCache,
+		AnalysisResultStore: aStore,
+		Logger:              s.logger,
+		Notifier:            s.notifier,
 	}
 
 	// Find the executor for this stage.
@@ -634,43 +682,47 @@ func (s *scheduler) reportDeploymentCompleted(ctx context.Context, status model.
 	defer func() {
 		switch status {
 		case model.DeploymentStatus_DEPLOYMENT_SUCCESS:
-			accounts, err := s.getMentionedAccounts(model.NotificationEventType_EVENT_DEPLOYMENT_SUCCEEDED)
+			users, groups, err := s.getApplicationNotificationMentions(model.NotificationEventType_EVENT_DEPLOYMENT_CANCELLED)
 			if err != nil {
-				s.logger.Error("failed to get the list of accounts", zap.Error(err))
+				s.logger.Error("failed to get the list of users", zap.Error(err))
 			}
 			s.notifier.Notify(model.NotificationEvent{
 				Type: model.NotificationEventType_EVENT_DEPLOYMENT_SUCCEEDED,
 				Metadata: &model.NotificationEventDeploymentSucceeded{
 					Deployment:        s.deployment,
-					MentionedAccounts: accounts,
+					MentionedAccounts: users,
+					MentionedGroups:   groups,
 				},
 			})
 
 		case model.DeploymentStatus_DEPLOYMENT_FAILURE:
-			accounts, err := s.getMentionedAccounts(model.NotificationEventType_EVENT_DEPLOYMENT_FAILED)
+			users, groups, err := s.getApplicationNotificationMentions(model.NotificationEventType_EVENT_DEPLOYMENT_CANCELLED)
 			if err != nil {
-				s.logger.Error("failed to get the list of accounts", zap.Error(err))
+				s.logger.Error("failed to get the list of users", zap.Error(err))
 			}
+
 			s.notifier.Notify(model.NotificationEvent{
 				Type: model.NotificationEventType_EVENT_DEPLOYMENT_FAILED,
 				Metadata: &model.NotificationEventDeploymentFailed{
 					Deployment:        s.deployment,
 					Reason:            desc,
-					MentionedAccounts: accounts,
+					MentionedAccounts: users,
+					MentionedGroups:   groups,
 				},
 			})
 
 		case model.DeploymentStatus_DEPLOYMENT_CANCELLED:
-			accounts, err := s.getMentionedAccounts(model.NotificationEventType_EVENT_DEPLOYMENT_CANCELLED)
+			users, groups, err := s.getApplicationNotificationMentions(model.NotificationEventType_EVENT_DEPLOYMENT_CANCELLED)
 			if err != nil {
-				s.logger.Error("failed to get the list of accounts", zap.Error(err))
+				s.logger.Error("failed to get the list of users", zap.Error(err))
 			}
 			s.notifier.Notify(model.NotificationEvent{
 				Type: model.NotificationEventType_EVENT_DEPLOYMENT_CANCELLED,
 				Metadata: &model.NotificationEventDeploymentCancelled{
 					Deployment:        s.deployment,
 					Commander:         cancelCommander,
-					MentionedAccounts: accounts,
+					MentionedAccounts: users,
+					MentionedGroups:   groups,
 				},
 			})
 		}
@@ -687,18 +739,19 @@ func (s *scheduler) reportDeploymentCompleted(ctx context.Context, status model.
 	return err
 }
 
-func (s *scheduler) getMentionedAccounts(event model.NotificationEventType) ([]string, error) {
-	n, ok := s.metadataStore.Shared().Get(model.MetadataKeyDeploymentNotification)
+// getApplicationNotificationMentions returns the list of users groups who should be mentioned in the notification.
+func (p *scheduler) getApplicationNotificationMentions(event model.NotificationEventType) ([]string, []string, error) {
+	n, ok := p.metadataStore.Shared().Get(model.MetadataKeyDeploymentNotification)
 	if !ok {
-		return []string{}, nil
+		return []string{}, []string{}, nil
 	}
 
 	var notification config.DeploymentNotification
 	if err := json.Unmarshal([]byte(n), &notification); err != nil {
-		return nil, fmt.Errorf("could not extract mentions config: %w", err)
+		return nil, nil, fmt.Errorf("could not extract mentions config: %w", err)
 	}
 
-	return notification.FindSlackAccounts(event), nil
+	return notification.FindSlackUsers(event), notification.FindSlackGroups(event), nil
 }
 
 func (s *scheduler) reportMostRecentlySuccessfulDeployment(ctx context.Context) error {

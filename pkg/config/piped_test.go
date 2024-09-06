@@ -15,6 +15,7 @@
 package config
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -222,10 +223,25 @@ func TestPipedConfig(t *testing.T) {
 							},
 						},
 						{
+							Name: "hookurl-with-mentioned-groups",
+							Slack: &NotificationReceiverSlack{
+								HookURL:         "https://slack.com/dev",
+								MentionedGroups: []string{"<!subteam^group1>", "<!subteam^group2>"},
+							},
+						},
+						{
 							Name: "hookurl-with-mentioned-accounts",
 							Slack: &NotificationReceiverSlack{
 								HookURL:           "https://slack.com/dev",
 								MentionedAccounts: []string{"user1", "user2"},
+							},
+						},
+						{
+							Name: "hookurl-with-mentioned-both-accounts-and-groups",
+							Slack: &NotificationReceiverSlack{
+								HookURL:           "https://slack.com/dev",
+								MentionedAccounts: []string{"user1", "user2"},
+								MentionedGroups:   []string{"<!subteam^group1>", "<!subteam^group2>"},
 							},
 						},
 						{
@@ -234,6 +250,23 @@ func TestPipedConfig(t *testing.T) {
 								OAuthToken:        "token",
 								ChannelID:         "testid",
 								MentionedAccounts: []string{"user1", "user2"},
+							},
+						},
+						{
+							Name: "integration-slack-api-with-mentioned-groups",
+							Slack: &NotificationReceiverSlack{
+								OAuthToken:      "token",
+								ChannelID:       "testid",
+								MentionedGroups: []string{"<!subteam^group1>", "<!subteam^group2>"},
+							},
+						},
+						{
+							Name: "integration-slack-api-with-mentioned-both-accounts-groups",
+							Slack: &NotificationReceiverSlack{
+								OAuthToken:        "token",
+								ChannelID:         "testid",
+								MentionedAccounts: []string{"user1", "user2"},
+								MentionedGroups:   []string{"<!subteam^group1>", "<!subteam^group2>"},
 							},
 						},
 						{
@@ -259,11 +292,45 @@ func TestPipedConfig(t *testing.T) {
 							},
 						},
 						{
+							Name: "integration-slack-api-with-oauthTokenFile-and-mentioned-groups",
+							Slack: &NotificationReceiverSlack{
+								OAuthTokenFile:  "foo/bar",
+								ChannelID:       "testid",
+								MentionedGroups: []string{"<!subteam^group1>", "<!subteam^group2>"},
+							},
+						},
+						{
+							Name: "integration-slack-api-with-oauthTokenFile-and-mentioned-both-accounts-and-groups",
+							Slack: &NotificationReceiverSlack{
+								OAuthTokenFile:    "foo/bar",
+								ChannelID:         "testid",
+								MentionedAccounts: []string{"user1", "user2"},
+								MentionedGroups:   []string{"<!subteam^group1>", "<!subteam^group2>"},
+							},
+						},
+						{
 							Name: "integration-slack-api-with-oauthTokenData-and-mentioned-accounts",
 							Slack: &NotificationReceiverSlack{
 								OAuthTokenData:    "token",
 								ChannelID:         "testid",
 								MentionedAccounts: []string{"user1", "user2"},
+							},
+						},
+						{
+							Name: "integration-slack-api-with-oauthTokenData-and-mentioned-groups",
+							Slack: &NotificationReceiverSlack{
+								OAuthTokenData:  "token",
+								ChannelID:       "testid",
+								MentionedGroups: []string{"<!subteam^group1>", "<!subteam^group2>"},
+							},
+						},
+						{
+							Name: "integration-slack-api-with-oauthTokenData-and-mentioned-both-accounts-and-groups",
+							Slack: &NotificationReceiverSlack{
+								OAuthTokenData:    "token",
+								ChannelID:         "testid",
+								MentionedAccounts: []string{"user1", "user2"},
+								MentionedGroups:   []string{"<!subteam^group1>", "<!subteam^group2>"},
 							},
 						},
 						{
@@ -541,6 +608,7 @@ func TestPipedConfigMask(t *testing.T) {
 					HostName:          "foo",
 					SSHKeyFile:        "foo",
 					SSHKeyData:        "foo",
+					Password:          "foo",
 				},
 				Repositories: []PipedRepository{
 					{
@@ -704,6 +772,7 @@ func TestPipedConfigMask(t *testing.T) {
 					HostName:          "foo",
 					SSHKeyFile:        maskString,
 					SSHKeyData:        maskString,
+					Password:          maskString,
 				},
 				Repositories: []PipedRepository{
 					{
@@ -882,6 +951,7 @@ func TestPipedSpecClone(t *testing.T) {
 					Username:   "username",
 					Email:      "username@email.com",
 					SSHKeyFile: "/etc/piped-secret/ssh-key",
+					Password:   "Password",
 				},
 				Repositories: []PipedRepository{
 					{
@@ -1079,6 +1149,7 @@ func TestPipedSpecClone(t *testing.T) {
 					Username:   "username",
 					Email:      "username@email.com",
 					SSHKeyFile: "/etc/piped-secret/ssh-key",
+					Password:   "Password",
 				},
 				Repositories: []PipedRepository{
 					{
@@ -1366,6 +1437,84 @@ func TestFindPlatformProvidersByLabel(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got := pipedSpec.FindPlatformProvidersByLabels(tc.labels, model.ApplicationKind_KUBERNETES)
 			assert.Equal(t, tc.want, got)
+		})
+	}
+}
+
+func TestPipeGitValidate(t *testing.T) {
+	t.Parallel()
+	testcases := []struct {
+		name string
+		git  PipedGit
+		err  error
+	}{
+		{
+			name: "Both SSH and Password are not valid",
+			git: PipedGit{
+				SSHKeyData: "sshkey1",
+				Password:   "Password",
+			},
+			err: errors.New("cannot configure both sshKeyData or sshKeyFile and password authentication"),
+		},
+		{
+			name: "Both SSH and Password is not valid",
+			git: PipedGit{
+				SSHKeyFile: "sshkeyfile",
+				SSHKeyData: "sshkeydata",
+				Password:   "Password",
+			},
+			err: errors.New("cannot configure both sshKeyData or sshKeyFile and password authentication"),
+		},
+		{
+			name: "SSH key data is not empty",
+			git: PipedGit{
+				SSHKeyData: "sshkey2",
+			},
+			err: nil,
+		},
+		{
+			name: "SSH key file is not empty",
+			git: PipedGit{
+				SSHKeyFile: "sshkey2",
+			},
+			err: nil,
+		},
+		{
+			name: "Both SSH file and data is not empty",
+			git: PipedGit{
+				SSHKeyData: "sshkeydata",
+				SSHKeyFile: "sshkeyfile",
+			},
+			err: errors.New("only either sshKeyFile or sshKeyData can be set"),
+		},
+		{
+			name: "Password is valid",
+			git: PipedGit{
+				Username: "Username",
+				Password: "Password",
+			},
+			err: nil,
+		},
+		{
+			name: "Username is empty",
+			git: PipedGit{
+				Username: "",
+				Password: "Password",
+			},
+			err: errors.New("both username and password must be set"),
+		},
+		{
+			name: "Git config is empty",
+			git:  PipedGit{},
+			err:  nil,
+		},
+	}
+	for _, tc := range testcases {
+		tc := tc
+		t.Run(tc.git.SSHKeyData, func(t *testing.T) {
+			t.Parallel()
+			err := tc.git.Validate()
+			assert.Equal(t, tc.err, err)
 		})
 	}
 }

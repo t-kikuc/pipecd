@@ -119,6 +119,9 @@ func (s *PipedSpec) Validate() error {
 	if s.SyncInterval < 0 {
 		return errors.New("syncInterval must be greater than or equal to 0")
 	}
+	if err := s.Git.Validate(); err != nil {
+		return err
+	}
 	for _, r := range s.ChartRepositories {
 		if err := r.Validate(); err != nil {
 			return err
@@ -326,6 +329,9 @@ type PipedGit struct {
 	SSHKeyFile string `json:"sshKeyFile,omitempty"`
 	// Base64 encoded string of ssh-key.
 	SSHKeyData string `json:"sshKeyData,omitempty"`
+	// Base64 encoded string of password.
+	// This will be used to clone the source repo with https basic auth.
+	Password string `json:"password,omitempty"`
 }
 
 func (g PipedGit) ShouldConfigureSSHConfig() bool {
@@ -345,6 +351,21 @@ func (g PipedGit) LoadSSHKey() ([]byte, error) {
 	return nil, errors.New("either sshKeyFile or sshKeyData must be set")
 }
 
+func (g *PipedGit) Validate() error {
+	isPassword := g.Password != ""
+	isSSH := g.ShouldConfigureSSHConfig()
+	if isSSH && isPassword {
+		return errors.New("cannot configure both sshKeyData or sshKeyFile and password authentication")
+	}
+	if isSSH && (g.SSHKeyData != "" && g.SSHKeyFile != "") {
+		return errors.New("only either sshKeyFile or sshKeyData can be set")
+	}
+	if isPassword && (g.Username == "" || g.Password == "") {
+		return errors.New("both username and password must be set")
+	}
+	return nil
+}
+
 func (g *PipedGit) Mask() {
 	if len(g.SSHConfigFilePath) != 0 {
 		g.SSHConfigFilePath = maskString
@@ -355,6 +376,20 @@ func (g *PipedGit) Mask() {
 	if len(g.SSHKeyData) != 0 {
 		g.SSHKeyData = maskString
 	}
+	if len(g.Password) != 0 {
+		g.Password = maskString
+	}
+}
+
+func (g *PipedGit) DecodedPassword() (string, error) {
+	if len(g.Password) == 0 {
+		return "", nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(g.Password)
+	if err != nil {
+		return "", err
+	}
+	return string(decoded), nil
 }
 
 type PipedRepository struct {
@@ -951,6 +986,7 @@ type NotificationReceiverSlack struct {
 	OAuthTokenFile    string   `json:"oauthTokenFile"`
 	ChannelID         string   `json:"channelID"`
 	MentionedAccounts []string `json:"mentionedAccounts,omitempty"`
+	MentionedGroups   []string `json:"mentionedGroups,omitempty"`
 }
 
 func (n *NotificationReceiverSlack) Mask() {
@@ -970,6 +1006,18 @@ func (n *NotificationReceiverSlack) Validate() error {
 	for _, mentionedAccount := range n.MentionedAccounts {
 		formatMentionedAccount := strings.TrimPrefix(mentionedAccount, "@")
 		mentionedAccounts = append(mentionedAccounts, formatMentionedAccount)
+	}
+	mentionedGroups := make([]string, 0, len(n.MentionedGroups))
+	for _, mentionedGroup := range n.MentionedGroups {
+		if !strings.Contains(mentionedGroup, "!subteam^") {
+			formatMentionedGroup := fmt.Sprintf("<!subteam^%s>", mentionedGroup)
+			mentionedGroups = append(mentionedGroups, formatMentionedGroup)
+		} else {
+			mentionedGroups = append(mentionedGroups, mentionedGroup)
+		}
+	}
+	if len(mentionedGroups) > 0 {
+		n.MentionedGroups = mentionedGroups
 	}
 	if len(mentionedAccounts) > 0 {
 		n.MentionedAccounts = mentionedAccounts

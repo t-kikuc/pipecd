@@ -15,6 +15,7 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -103,12 +104,13 @@ func TestValidateWaitApprovalStageOptions(t *testing.T) {
 	}
 }
 
-func TestFindSlackAccounts(t *testing.T) {
+func TestFindSlackUsersAndGroups(t *testing.T) {
 	testcases := []struct {
-		name     string
-		mentions []NotificationMention
-		event    model.NotificationEventType
-		want     []string
+		name       string
+		mentions   []NotificationMention
+		event      model.NotificationEventType
+		wantUsers  []string
+		wantGroups []string
 	}{
 		{
 			name: "match an event name",
@@ -122,8 +124,8 @@ func TestFindSlackAccounts(t *testing.T) {
 					Slack: []string{"user-3", "user-4"},
 				},
 			},
-			event: model.NotificationEventType_EVENT_DEPLOYMENT_TRIGGERED,
-			want:  []string{"user-1", "user-2"},
+			event:     model.NotificationEventType_EVENT_DEPLOYMENT_TRIGGERED,
+			wantUsers: []string{"user-1", "user-2"},
 		},
 		{
 			name: "match with both event name and all-events mark",
@@ -133,12 +135,14 @@ func TestFindSlackAccounts(t *testing.T) {
 					Slack: []string{"user-1", "user-2"},
 				},
 				{
-					Event: "*",
-					Slack: []string{"user-1", "user-3"},
+					Event:       "*",
+					Slack:       []string{"user-1", "user-3"},
+					SlackGroups: []string{"group-1", "group-2"},
 				},
 			},
-			event: model.NotificationEventType_EVENT_DEPLOYMENT_TRIGGERED,
-			want:  []string{"user-1", "user-2", "user-3"},
+			event:      model.NotificationEventType_EVENT_DEPLOYMENT_TRIGGERED,
+			wantUsers:  []string{"user-1", "user-2", "user-3"},
+			wantGroups: []string{"group-1", "group-2"},
 		},
 		{
 			name: "match by all-events mark",
@@ -152,8 +156,23 @@ func TestFindSlackAccounts(t *testing.T) {
 					Slack: []string{"user-1", "user-3"},
 				},
 			},
-			event: model.NotificationEventType_EVENT_DEPLOYMENT_PLANNED,
-			want:  []string{"user-1", "user-3"},
+			event:     model.NotificationEventType_EVENT_DEPLOYMENT_PLANNED,
+			wantUsers: []string{"user-1", "user-3"},
+		},
+		{
+			name: "match by all-events mark with slack groups",
+			mentions: []NotificationMention{
+				{
+					Event: "DEPLOYMENT_TRIGGERED",
+					Slack: []string{"user-1", "user-2"},
+				},
+				{
+					Event:       "*",
+					SlackGroups: []string{"group-1", "group-2"},
+				},
+			},
+			event:      model.NotificationEventType_EVENT_DEPLOYMENT_PLANNED,
+			wantGroups: []string{"group-1", "group-2"},
 		},
 		{
 			name: "does not match anything",
@@ -163,8 +182,46 @@ func TestFindSlackAccounts(t *testing.T) {
 					Slack: []string{"user-1", "user-2"},
 				},
 			},
-			event: model.NotificationEventType_EVENT_DEPLOYMENT_PLANNED,
-			want:  []string{},
+			event:     model.NotificationEventType_EVENT_DEPLOYMENT_PLANNED,
+			wantUsers: []string{},
+		},
+		{
+			name: "match an event name with Slack Groups",
+			mentions: []NotificationMention{
+				{
+					Event:       "DEPLOYMENT_PLANNED",
+					SlackGroups: []string{"group-1", "group-2"},
+				},
+			},
+			event:      model.NotificationEventType_EVENT_DEPLOYMENT_PLANNED,
+			wantGroups: []string{"group-1", "group-2"},
+		},
+		{
+			name: "match an event name with Slack Users and Groups",
+			mentions: []NotificationMention{
+				{
+					Event:       "DEPLOYMENT_PLANNED",
+					Slack:       []string{"user-1", "user-2"},
+					SlackGroups: []string{"group-1", "group-2"},
+				},
+			},
+			event:      model.NotificationEventType_EVENT_DEPLOYMENT_PLANNED,
+			wantUsers:  []string{"user-1", "user-2"},
+			wantGroups: []string{"group-1", "group-2"},
+		},
+		{
+			name: "match an event name with Slack Users with new field SlackUsers",
+			mentions: []NotificationMention{
+				{
+					Event:       "DEPLOYMENT_PLANNED",
+					SlackUsers:  []string{"user-1", "user-2"},
+					Slack:       []string{"user-3", "user-4"},
+					SlackGroups: []string{"group-1", "group-2"},
+				},
+			},
+			event:      model.NotificationEventType_EVENT_DEPLOYMENT_PLANNED,
+			wantUsers:  []string{"user-1", "user-2", "user-3", "user-4"},
+			wantGroups: []string{"group-1", "group-2"},
 		},
 	}
 	for _, tc := range testcases {
@@ -172,8 +229,10 @@ func TestFindSlackAccounts(t *testing.T) {
 			n := &DeploymentNotification{
 				tc.mentions,
 			}
-			as := n.FindSlackAccounts(tc.event)
-			assert.ElementsMatch(t, tc.want, as)
+			as := n.FindSlackUsers(tc.event)
+			ag := n.FindSlackGroups(tc.event)
+			assert.ElementsMatch(t, tc.wantUsers, as)
+			assert.ElementsMatch(t, tc.wantGroups, ag)
 		})
 	}
 }
@@ -368,6 +427,9 @@ func TestGenericTriggerConfiguration(t *testing.T) {
 							Disabled: newBoolPointer(true),
 						},
 					},
+					Planner: DeploymentPlanner{
+						AutoRollback: newBoolPointer(true),
+					},
 				},
 				Input: KubernetesDeploymentInput{
 					AutoRollback: newBoolPointer(true),
@@ -419,6 +481,9 @@ func TestTrueByDefaultBoolConfiguration(t *testing.T) {
 							Disabled: newBoolPointer(true),
 						},
 					},
+					Planner: DeploymentPlanner{
+						AutoRollback: newBoolPointer(true),
+					},
 				},
 				Input: KubernetesDeploymentInput{
 					AutoRollback: newBoolPointer(true),
@@ -448,6 +513,9 @@ func TestTrueByDefaultBoolConfiguration(t *testing.T) {
 							Disabled: newBoolPointer(true),
 						},
 					},
+					Planner: DeploymentPlanner{
+						AutoRollback: newBoolPointer(true),
+					},
 				},
 				Input: KubernetesDeploymentInput{
 					AutoRollback: newBoolPointer(false),
@@ -476,6 +544,9 @@ func TestTrueByDefaultBoolConfiguration(t *testing.T) {
 						OnChain: OnChain{
 							Disabled: newBoolPointer(true),
 						},
+					},
+					Planner: DeploymentPlanner{
+						AutoRollback: newBoolPointer(true),
 					},
 				},
 				Input: KubernetesDeploymentInput{
@@ -527,6 +598,9 @@ func TestGenericPostSyncConfiguration(t *testing.T) {
 						OnChain: OnChain{
 							Disabled: newBoolPointer(true),
 						},
+					},
+					Planner: DeploymentPlanner{
+						AutoRollback: newBoolPointer(true),
 					},
 					PostSync: &PostSync{
 						DeploymentChain: &DeploymentChain{
@@ -597,6 +671,9 @@ func TestGenericAnalysisConfiguration(t *testing.T) {
 							Disabled: newBoolPointer(true),
 						},
 					},
+					Planner: DeploymentPlanner{
+						AutoRollback: newBoolPointer(true),
+					},
 					Pipeline: &DeploymentPipeline{
 						Stages: []PipelineStage{
 							{
@@ -630,6 +707,7 @@ func TestGenericAnalysisConfiguration(t *testing.T) {
 										},
 									},
 								},
+								With: json.RawMessage(`{"duration":"10m","metrics":[{"expected":{"max":0.1},"failureLimit":1,"interval":"1m","provider":"prometheus-dev","query":"grpc_error_percentage"},{"expected":{"min":0.9},"failureLimit":1,"interval":"1m","provider":"prometheus-dev","query":"grpc_succeed_percentage"}]}`),
 							},
 							{
 								Name: model.StageAnalysis,
@@ -646,6 +724,7 @@ func TestGenericAnalysisConfiguration(t *testing.T) {
 										},
 									},
 								},
+								With: json.RawMessage(`{"duration":"10m","logs":[{"failureLimit":3,"interval":"1m","provider":"stackdriver-dev","query":"resource.labels.pod_id=\"pod1\"\n"}]}`),
 							},
 							{
 								Name: model.StageAnalysis,
@@ -663,6 +742,7 @@ func TestGenericAnalysisConfiguration(t *testing.T) {
 										},
 									},
 								},
+								With: json.RawMessage(`{"duration":"10m","https":[{"expectedCode":200,"failureLimit":1,"interval":"1m","method":"GET","url":"https://canary-endpoint.dev"}]}`),
 							},
 						},
 					},
@@ -720,6 +800,7 @@ func TestCustomSyncConfig(t *testing.T) {
 									},
 									Run: "sam build\nsam deploy -g --profile $AWS_PROFILE\n",
 								},
+								With: json.RawMessage(`{"envs":{"AWS_PROFILE":"default"},"run":"sam build\nsam deploy -g --profile $AWS_PROFILE\n","timeout":"6h"}`),
 							},
 						},
 					},
@@ -731,6 +812,9 @@ func TestCustomSyncConfig(t *testing.T) {
 						OnChain: OnChain{
 							Disabled: newBoolPointer(true),
 						},
+					},
+					Planner: DeploymentPlanner{
+						AutoRollback: newBoolPointer(true),
 					},
 				},
 				Input: LambdaDeploymentInput{

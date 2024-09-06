@@ -74,13 +74,18 @@ func findPlatformProvider(in *executor.Input) (name string, cfg *config.Platform
 }
 
 func loadFunctionManifest(in *executor.Input, functionManifestFile string, ds *deploysource.DeploySource) (provider.FunctionManifest, bool) {
-	in.LogPersister.Infof("Loading service manifest at commit %s", ds.Revision)
+	in.LogPersister.Infof("Loading lambda function manifest at commit %s", ds.Revision)
 
 	fm, err := provider.LoadFunctionManifest(ds.AppDir, functionManifestFile)
 	if err != nil {
 		in.LogPersister.Errorf("Failed to load lambda function manifest (%v)", err)
 		return provider.FunctionManifest{}, false
 	}
+
+	fm.Spec.Tags[provider.LabelManagedBy] = provider.ManagedByPiped
+	fm.Spec.Tags[provider.LabelPiped] = in.PipedConfig.PipedID
+	fm.Spec.Tags[provider.LabelApplication] = in.Deployment.ApplicationId
+	fm.Spec.Tags[provider.LabelCommitHash] = in.Deployment.CommitHash()
 
 	in.LogPersister.Infof("Successfully loaded the lambda function manifest at commit %s", ds.Revision)
 	return fm, true

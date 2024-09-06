@@ -15,6 +15,7 @@
 package config
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -54,6 +55,9 @@ func TestTerraformApplicationtConfig(t *testing.T) {
 							Disabled: newBoolPointer(true),
 						},
 					},
+					Planner: DeploymentPlanner{
+						AutoRollback: newBoolPointer(true),
+					},
 				},
 				Input: TerraformDeploymentInput{},
 			},
@@ -80,6 +84,9 @@ func TestTerraformApplicationtConfig(t *testing.T) {
 						OnChain: OnChain{
 							Disabled: newBoolPointer(true),
 						},
+					},
+					Planner: DeploymentPlanner{
+						AutoRollback: newBoolPointer(true),
 					},
 				},
 				Input: TerraformDeploymentInput{
@@ -110,6 +117,9 @@ func TestTerraformApplicationtConfig(t *testing.T) {
 						OnChain: OnChain{
 							Disabled: newBoolPointer(true),
 						},
+					},
+					Planner: DeploymentPlanner{
+						AutoRollback: newBoolPointer(true),
 					},
 					Encryption: &SecretEncryption{
 						EncryptedSecrets: map[string]string{
@@ -146,6 +156,7 @@ func TestTerraformApplicationtConfig(t *testing.T) {
 									Timeout:        Duration(6 * time.Hour),
 									MinApproverNum: 1,
 								},
+								With: json.RawMessage(`{"approvers":["foo","bar"]}`),
 							},
 							{
 								Name:                       model.StageTerraformApply,
@@ -168,6 +179,9 @@ func TestTerraformApplicationtConfig(t *testing.T) {
 						OnChain: OnChain{
 							Disabled: newBoolPointer(true),
 						},
+					},
+					Planner: DeploymentPlanner{
+						AutoRollback: newBoolPointer(true),
 					},
 				},
 				Input: TerraformDeploymentInput{
@@ -190,6 +204,7 @@ func TestTerraformApplicationtConfig(t *testing.T) {
 								TerraformPlanStageOptions: &TerraformPlanStageOptions{
 									ExitOnNoChanges: true,
 								},
+								With: json.RawMessage(`{"exitOnNoChanges":true}`),
 							},
 							{
 								Name: model.StageWaitApproval,
@@ -198,6 +213,7 @@ func TestTerraformApplicationtConfig(t *testing.T) {
 									Timeout:        Duration(6 * time.Hour),
 									MinApproverNum: 1,
 								},
+								With: json.RawMessage(`{"approvers":["foo","bar"]}`),
 							},
 							{
 								Name:                       model.StageTerraformApply,
@@ -220,6 +236,9 @@ func TestTerraformApplicationtConfig(t *testing.T) {
 						OnChain: OnChain{
 							Disabled: newBoolPointer(true),
 						},
+					},
+					Planner: DeploymentPlanner{
+						AutoRollback: newBoolPointer(true),
 					},
 				},
 				Input: TerraformDeploymentInput{

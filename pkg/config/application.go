@@ -64,6 +64,9 @@ type DeploymentPlanner struct {
 	// Disable auto-detecting to use QUICK_SYNC or PROGRESSIVE_SYNC.
 	// Always use the speficied pipeline for all deployments.
 	AlwaysUsePipeline bool `json:"alwaysUsePipeline"`
+	// Automatically reverts all deployment changes on failure.
+	// Default is true.
+	AutoRollback *bool `json:"autoRollback,omitempty" default:"true"`
 }
 
 type Trigger struct {
@@ -220,6 +223,7 @@ type PipelineStage struct {
 	Name    model.Stage
 	Desc    string
 	Timeout Duration
+	With    json.RawMessage
 
 	CustomSyncOptions        *CustomSyncOptions
 	WaitStageOptions         *WaitStageOptions
@@ -270,6 +274,7 @@ func (s *PipelineStage) UnmarshalJSON(data []byte) error {
 	s.Name = gs.Name
 	s.Desc = gs.Desc
 	s.Timeout = gs.Timeout
+	s.With = gs.With
 
 	switch s.Name {
 	case model.StageCustomSync:
@@ -592,20 +597,49 @@ func (a *Attachment) Validate() error {
 	return nil
 }
 
-// DeploymentNotification represents the way to send to users.
+// DeploymentNotification represents the way to send to users or groups.
 type DeploymentNotification struct {
 	// List of users to be notified for each event.
 	Mentions []NotificationMention `json:"mentions"`
 }
 
-func (n *DeploymentNotification) FindSlackAccounts(event model.NotificationEventType) []string {
+// FindSlackGroups returns a list of slack group IDs to be mentioned for the given event.
+func (n *DeploymentNotification) FindSlackGroups(event model.NotificationEventType) []string {
 	as := make(map[string]struct{})
 	for _, m := range n.Mentions {
 		if m.Event != allEventsSymbol && "EVENT_"+m.Event != event.String() {
 			continue
 		}
-		for _, s := range m.Slack {
-			as[s] = struct{}{}
+		if len(m.SlackGroups) > 0 {
+			for _, sg := range m.SlackGroups {
+				as[sg] = struct{}{}
+			}
+		}
+	}
+
+	approvers := make([]string, 0, len(as))
+	for a := range as {
+		approvers = append(approvers, a)
+	}
+	return approvers
+}
+
+// FindSlackUsers returns a list of slack user IDs to be mentioned for the given event.
+func (n *DeploymentNotification) FindSlackUsers(event model.NotificationEventType) []string {
+	as := make(map[string]struct{})
+	for _, m := range n.Mentions {
+		if m.Event != allEventsSymbol && "EVENT_"+m.Event != event.String() {
+			continue
+		}
+		if len(m.Slack) > 0 {
+			for _, s := range m.Slack {
+				as[s] = struct{}{}
+			}
+		}
+		if len(m.SlackUsers) > 0 {
+			for _, su := range m.SlackUsers {
+				as[su] = struct{}{}
+			}
 		}
 	}
 
@@ -619,10 +653,19 @@ func (n *DeploymentNotification) FindSlackAccounts(event model.NotificationEvent
 type NotificationMention struct {
 	// The event to be notified to users.
 	Event string `json:"event"`
+	// Deprecated: Please use SlackUsers instead
 	// List of user IDs for mentioning in Slack.
 	// See https://api.slack.com/reference/surfaces/formatting#mentioning-users
 	// for more information on how to check them.
 	Slack []string `json:"slack"`
+	// List of user IDs for mentioning in Slack.
+	// See https://api.slack.com/reference/surfaces/formatting#mentioning-users
+	// for more information on how to check them.
+	SlackUsers []string `json:"slackusers,omitempty"`
+	// List of group IDs for mentioning in Slack.
+	// See https://api.slack.com/reference/surfaces/formatting#mentioning-groups
+	// for more information on how to check them.
+	SlackGroups []string `json:"slackgroups,omitempty"`
 	// TODO: Support for email notification
 	// The email for notification.
 	Email []string `json:"email"`
@@ -733,7 +776,7 @@ func (dd *DriftDetection) Validate() error {
 }
 
 func LoadApplication(repoPath, configRelPath string, appKind model.ApplicationKind) (*GenericApplicationSpec, error) {
-	var absPath = filepath.Join(repoPath, configRelPath)
+	absPath := filepath.Join(repoPath, configRelPath)
 
 	cfg, err := LoadFromYAML(absPath)
 	if err != nil {

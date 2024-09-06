@@ -41,7 +41,7 @@ type applicationLister interface {
 
 type Getter interface {
 	CloudRunGetter(platformProvider string) (cloudrun.Getter, bool)
-	ECSRunGetter(platformProvider string) (ecs.Getter, bool)
+	ECSGetter(platformProvider string) (ecs.Getter, bool)
 	KubernetesGetter(platformProvider string) (kubernetes.Getter, bool)
 	LambdaGetter(platformProvider string) (lambda.Getter, bool)
 	TerraformGetter(platformProvider string) (terraform.Getter, bool)
@@ -68,10 +68,12 @@ type cloudRunStore interface {
 
 type lambdaStore interface {
 	Run(ctx context.Context) error
+	lambda.Getter
 }
 
 type ecsStore interface {
 	Run(ctx context.Context) error
+	ecs.Getter
 }
 
 // store manages a list of particular stores for all cloud providers.
@@ -122,11 +124,19 @@ func NewStore(ctx context.Context, cfg *config.PipedSpec, appLister applicationL
 			s.cloudrunStores[cp.Name] = store
 
 		case model.PlatformProviderLambda:
-			store := lambda.NewStore(cp.LambdaConfig, cp.Name, appLister, logger)
+			store, err := lambda.NewStore(cp.LambdaConfig, cp.Name, logger)
+			if err != nil {
+				logger.Error("failed to create a new lambda's livestatestore", zap.Error(err))
+				continue
+			}
 			s.lambdaStores[cp.Name] = store
 
 		case model.PlatformProviderECS:
-			store := ecs.NewStore(cp.ECSConfig, cp.Name, appLister, logger)
+			store, err := ecs.NewStore(cp.ECSConfig, cp.Name, logger)
+			if err != nil {
+				logger.Error("failed to create a new ecs's livestatestore", zap.Error(err))
+				continue
+			}
 			s.ecsStores[cp.Name] = store
 		}
 	}
@@ -192,7 +202,7 @@ func (s *store) CloudRunGetter(platformProvider string) (cloudrun.Getter, bool) 
 	return ks, ok
 }
 
-func (s *store) ECSRunGetter(platformProvider string) (ecs.Getter, bool) {
+func (s *store) ECSGetter(platformProvider string) (ecs.Getter, bool) {
 	ks, ok := s.ecsStores[platformProvider]
 	return ks, ok
 }
