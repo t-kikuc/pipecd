@@ -16,13 +16,16 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 	"google.golang.org/grpc"
 
-	"github.com/pipe-cd/pipecd/pkg/config"
+	"github.com/pipe-cd/pipecd/pkg/configv1"
 	"github.com/pipe-cd/pipecd/pkg/model"
 	pluginapi "github.com/pipe-cd/pipecd/pkg/plugin/api/v1alpha1"
 	"github.com/pipe-cd/pipecd/pkg/plugin/api/v1alpha1/deployment"
@@ -30,6 +33,7 @@ import (
 
 type fakePlugin struct {
 	pluginapi.PluginClient
+	syncStrategy   *deployment.DetermineStrategyResponse
 	quickStages    []*model.PipelineStage
 	pipelineStages []*model.PipelineStage
 	rollbackStages []*model.PipelineStage
@@ -70,10 +74,12 @@ func (p *fakePlugin) BuildPipelineSyncStages(ctx context.Context, req *deploymen
 	}, nil
 }
 func (p *fakePlugin) DetermineStrategy(ctx context.Context, req *deployment.DetermineStrategyRequest, opts ...grpc.CallOption) (*deployment.DetermineStrategyResponse, error) {
-	return nil, nil
+	return p.syncStrategy, nil
 }
 func (p *fakePlugin) DetermineVersions(ctx context.Context, req *deployment.DetermineVersionsRequest, opts ...grpc.CallOption) (*deployment.DetermineVersionsResponse, error) {
-	return nil, nil
+	return &deployment.DetermineVersionsResponse{
+		Versions: []*model.ArtifactVersion{},
+	}, nil
 }
 func (p *fakePlugin) FetchDefinedStages(ctx context.Context, req *deployment.FetchDefinedStagesRequest, opts ...grpc.CallOption) (*deployment.FetchDefinedStagesResponse, error) {
 	stages := make([]string, 0, len(p.quickStages)+len(p.pipelineStages)+len(p.rollbackStages))
@@ -112,14 +118,13 @@ func TestBuildQuickSyncStages(t *testing.T) {
 				&fakePlugin{
 					quickStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-1-stage-1",
-							Visible: true,
+							Id: "plugin-1-stage-1",
 						},
 					},
 					rollbackStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-1-rollback",
-							Visible: false,
+							Id:       "plugin-1-rollback",
+							Rollback: true,
 						},
 					},
 				},
@@ -132,12 +137,11 @@ func TestBuildQuickSyncStages(t *testing.T) {
 			wantErr: false,
 			expectedStages: []*model.PipelineStage{
 				{
-					Id:      "plugin-1-stage-1",
-					Visible: true,
+					Id: "plugin-1-stage-1",
 				},
 				{
-					Id:      "plugin-1-rollback",
-					Visible: false,
+					Id:       "plugin-1-rollback",
+					Rollback: true,
 				},
 			},
 		},
@@ -147,28 +151,30 @@ func TestBuildQuickSyncStages(t *testing.T) {
 				&fakePlugin{
 					quickStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-1-stage-1",
-							Visible: true,
+							Id:    "plugin-1-stage-1",
+							Index: 0,
 						},
 					},
 					rollbackStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-1-rollback",
-							Visible: false,
+							Id:       "plugin-1-rollback",
+							Index:    0,
+							Rollback: true,
 						},
 					},
 				},
 				&fakePlugin{
 					quickStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-2-stage-1",
-							Visible: true,
+							Id:    "plugin-2-stage-1",
+							Index: 1,
 						},
 					},
 					rollbackStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-2-rollback",
-							Visible: false,
+							Id:       "plugin-2-rollback",
+							Index:    1,
+							Rollback: true,
 						},
 					},
 				},
@@ -181,20 +187,23 @@ func TestBuildQuickSyncStages(t *testing.T) {
 			wantErr: false,
 			expectedStages: []*model.PipelineStage{
 				{
-					Id:      "plugin-1-stage-1",
-					Visible: true,
+					Id:    "plugin-1-stage-1",
+					Index: 0,
 				},
 				{
-					Id:      "plugin-2-stage-1",
-					Visible: true,
+					Id:       "plugin-2-stage-1",
+					Index:    1,
+					Requires: []string{"plugin-1-stage-1"},
 				},
 				{
-					Id:      "plugin-1-rollback",
-					Visible: false,
+					Id:       "plugin-1-rollback",
+					Index:    0,
+					Rollback: true,
 				},
 				{
-					Id:      "plugin-2-rollback",
-					Visible: false,
+					Id:       "plugin-2-rollback",
+					Index:    1,
+					Rollback: true,
 				},
 			},
 		},
@@ -204,28 +213,28 @@ func TestBuildQuickSyncStages(t *testing.T) {
 				&fakePlugin{
 					quickStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-1-stage-1",
-							Visible: true,
+							Id:    "plugin-1-stage-1",
+							Index: 0,
 						},
 					},
 					rollbackStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-1-rollback",
-							Visible: false,
+							Id:       "plugin-1-rollback",
+							Rollback: true,
 						},
 					},
 				},
 				&fakePlugin{
 					quickStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-2-stage-1",
-							Visible: true,
+							Id:    "plugin-2-stage-1",
+							Index: 1,
 						},
 					},
 					rollbackStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-2-rollback",
-							Visible: false,
+							Id:       "plugin-2-rollback",
+							Rollback: true,
 						},
 					},
 				},
@@ -238,12 +247,13 @@ func TestBuildQuickSyncStages(t *testing.T) {
 			wantErr: false,
 			expectedStages: []*model.PipelineStage{
 				{
-					Id:      "plugin-1-stage-1",
-					Visible: true,
+					Id:    "plugin-1-stage-1",
+					Index: 0,
 				},
 				{
-					Id:      "plugin-2-stage-1",
-					Visible: true,
+					Id:       "plugin-2-stage-1",
+					Index:    1,
+					Requires: []string{"plugin-1-stage-1"},
 				},
 			},
 		},
@@ -277,21 +287,22 @@ func TestBuildPipelineSyncStages(t *testing.T) {
 				&fakePlugin{
 					pipelineStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-1-stage-1",
-							Name:    "plugin-1-stage-1",
-							Visible: true,
+							Id:    "plugin-1-stage-1",
+							Index: 0,
+							Name:  "plugin-1-stage-1",
 						},
 						{
-							Id:      "plugin-1-stage-2",
-							Name:    "plugin-1-stage-2",
-							Visible: true,
+							Id:    "plugin-1-stage-2",
+							Index: 1,
+							Name:  "plugin-1-stage-2",
 						},
 					},
 					rollbackStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-1-rollback",
-							Name:    "plugin-1-rollback",
-							Visible: false,
+							Id:       "plugin-1-rollback",
+							Index:    0,
+							Name:     "plugin-1-rollback",
+							Rollback: true,
 						},
 					},
 				},
@@ -316,22 +327,21 @@ func TestBuildPipelineSyncStages(t *testing.T) {
 			wantErr: false,
 			expectedStages: []*model.PipelineStage{
 				{
-					Id:      "plugin-1-stage-1",
-					Name:    "plugin-1-stage-1",
-					Index:   0,
-					Visible: true,
+					Id:    "plugin-1-stage-1",
+					Name:  "plugin-1-stage-1",
+					Index: 0,
 				},
 				{
 					Id:       "plugin-1-stage-2",
 					Name:     "plugin-1-stage-2",
 					Index:    1,
 					Requires: []string{"plugin-1-stage-1"},
-					Visible:  true,
 				},
 				{
-					Id:      "plugin-1-rollback",
-					Name:    "plugin-1-rollback",
-					Visible: false,
+					Id:       "plugin-1-rollback",
+					Name:     "plugin-1-rollback",
+					Index:    0,
+					Rollback: true,
 				},
 			},
 		},
@@ -341,40 +351,36 @@ func TestBuildPipelineSyncStages(t *testing.T) {
 				&fakePlugin{
 					pipelineStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-1-stage-1",
-							Name:    "plugin-1-stage-1",
-							Visible: true,
+							Id:   "plugin-1-stage-1",
+							Name: "plugin-1-stage-1",
 						},
 						{
-							Id:      "plugin-1-stage-2",
-							Name:    "plugin-1-stage-2",
-							Visible: true,
+							Id:   "plugin-1-stage-2",
+							Name: "plugin-1-stage-2",
 						},
 						{
-							Id:      "plugin-1-stage-3",
-							Name:    "plugin-1-stage-3",
-							Visible: true,
+							Id:   "plugin-1-stage-3",
+							Name: "plugin-1-stage-3",
 						},
 					},
 					rollbackStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-1-rollback",
-							Name:    "plugin-1-rollback",
-							Visible: false,
+							Id:       "plugin-1-rollback",
+							Index:    0,
+							Name:     "plugin-1-rollback",
+							Rollback: true,
 						},
 					},
 				},
 				&fakePlugin{
 					pipelineStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-2-stage-1",
-							Name:    "plugin-2-stage-1",
-							Visible: true,
+							Id:   "plugin-2-stage-1",
+							Name: "plugin-2-stage-1",
 						},
 						{
-							Id:      "plugin-2-stage-2",
-							Name:    "plugin-2-stage-2",
-							Visible: true,
+							Id:   "plugin-2-stage-2",
+							Name: "plugin-2-stage-2",
 						},
 					},
 				},
@@ -411,43 +417,39 @@ func TestBuildPipelineSyncStages(t *testing.T) {
 			wantErr: false,
 			expectedStages: []*model.PipelineStage{
 				{
-					Id:      "plugin-1-stage-1",
-					Name:    "plugin-1-stage-1",
-					Index:   0,
-					Visible: true,
+					Id:    "plugin-1-stage-1",
+					Name:  "plugin-1-stage-1",
+					Index: 0,
 				},
 				{
 					Id:       "plugin-1-stage-2",
 					Name:     "plugin-1-stage-2",
 					Index:    1,
 					Requires: []string{"plugin-1-stage-1"},
-					Visible:  true,
 				},
 				{
 					Id:       "plugin-2-stage-1",
 					Name:     "plugin-2-stage-1",
 					Index:    2,
 					Requires: []string{"plugin-1-stage-2"},
-					Visible:  true,
 				},
 				{
 					Id:       "plugin-1-stage-3",
 					Name:     "plugin-1-stage-3",
 					Index:    3,
 					Requires: []string{"plugin-2-stage-1"},
-					Visible:  true,
 				},
 				{
 					Id:       "plugin-2-stage-2",
 					Name:     "plugin-2-stage-2",
 					Index:    4,
 					Requires: []string{"plugin-1-stage-3"},
-					Visible:  true,
 				},
 				{
-					Id:      "plugin-1-rollback",
-					Name:    "plugin-1-rollback",
-					Visible: false,
+					Id:       "plugin-1-rollback",
+					Name:     "plugin-1-rollback",
+					Index:    0,
+					Rollback: true,
 				},
 			},
 		},
@@ -457,42 +459,40 @@ func TestBuildPipelineSyncStages(t *testing.T) {
 				&fakePlugin{
 					pipelineStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-1-stage-1",
-							Name:    "plugin-1-stage-1",
-							Visible: true,
+							Id:   "plugin-1-stage-1",
+							Name: "plugin-1-stage-1",
 						},
 						{
-							Id:      "plugin-1-stage-2",
-							Name:    "plugin-1-stage-2",
-							Visible: true,
+							Id:   "plugin-1-stage-2",
+							Name: "plugin-1-stage-2",
 						},
 						{
-							Id:      "plugin-1-stage-3",
-							Name:    "plugin-1-stage-3",
-							Visible: true,
+							Id:   "plugin-1-stage-3",
+							Name: "plugin-1-stage-3",
 						},
 					},
 					rollbackStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-1-rollback",
-							Name:    "plugin-1-rollback",
-							Visible: false,
+							Id:       "plugin-1-rollback",
+							Index:    0,
+							Name:     "plugin-1-rollback",
+							Rollback: true,
 						},
 					},
 				},
 				&fakePlugin{
 					pipelineStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-2-stage-1",
-							Name:    "plugin-2-stage-1",
-							Visible: true,
+							Id:   "plugin-2-stage-1",
+							Name: "plugin-2-stage-1",
 						},
 					},
 					rollbackStages: []*model.PipelineStage{
 						{
-							Id:      "plugin-2-rollback",
-							Name:    "plugin-2-rollback",
-							Visible: false,
+							Id:       "plugin-2-rollback",
+							Index:    2,
+							Name:     "plugin-2-rollback",
+							Rollback: true,
 						},
 					},
 				},
@@ -525,41 +525,39 @@ func TestBuildPipelineSyncStages(t *testing.T) {
 			wantErr: false,
 			expectedStages: []*model.PipelineStage{
 				{
-					Id:      "plugin-1-stage-1",
-					Name:    "plugin-1-stage-1",
-					Index:   0,
-					Visible: true,
+					Id:    "plugin-1-stage-1",
+					Name:  "plugin-1-stage-1",
+					Index: 0,
 				},
 				{
 					Id:       "plugin-1-stage-2",
 					Name:     "plugin-1-stage-2",
 					Index:    1,
 					Requires: []string{"plugin-1-stage-1"},
-					Visible:  true,
 				},
 				{
 					Id:       "plugin-2-stage-1",
 					Name:     "plugin-2-stage-1",
 					Index:    2,
 					Requires: []string{"plugin-1-stage-2"},
-					Visible:  true,
 				},
 				{
 					Id:       "plugin-1-stage-3",
 					Name:     "plugin-1-stage-3",
 					Index:    3,
 					Requires: []string{"plugin-2-stage-1"},
-					Visible:  true,
 				},
 				{
-					Id:      "plugin-1-rollback",
-					Name:    "plugin-1-rollback",
-					Visible: false,
+					Id:       "plugin-1-rollback",
+					Index:    0,
+					Name:     "plugin-1-rollback",
+					Rollback: true,
 				},
 				{
-					Id:      "plugin-2-rollback",
-					Name:    "plugin-2-rollback",
-					Visible: false,
+					Id:       "plugin-2-rollback",
+					Index:    2,
+					Name:     "plugin-2-rollback",
+					Rollback: true,
 				},
 			},
 		},
@@ -581,6 +579,368 @@ func TestBuildPipelineSyncStages(t *testing.T) {
 			stages, err := planner.buildPipelineSyncStages(context.TODO(), tc.cfg)
 			require.Equal(t, tc.wantErr, err != nil)
 			assert.Equal(t, tc.expectedStages, stages)
+		})
+	}
+}
+
+func TestPlanner_BuildPlan(t *testing.T) {
+	t.Parallel()
+
+	testcases := []struct {
+		name           string
+		isFirstDeploy  bool
+		plugins        []pluginapi.PluginClient
+		cfg            *config.GenericApplicationSpec
+		deployment     *model.Deployment
+		wantErr        bool
+		expectedOutput *plannerOutput
+	}{
+		{
+			name:          "quick sync strategy triggered by web console",
+			isFirstDeploy: false,
+			plugins: []pluginapi.PluginClient{
+				&fakePlugin{
+					quickStages: []*model.PipelineStage{
+						{
+							Id:      "plugin-1-stage-1",
+							Visible: true,
+						},
+					},
+				},
+			},
+			cfg: &config.GenericApplicationSpec{
+				Planner: config.DeploymentPlanner{
+					AutoRollback: pointerBool(true),
+				},
+			},
+			deployment: &model.Deployment{
+				Trigger: &model.DeploymentTrigger{
+					SyncStrategy:    model.SyncStrategy_QUICK_SYNC,
+					StrategySummary: "Triggered by web console",
+				},
+			},
+			wantErr: false,
+			expectedOutput: &plannerOutput{
+				SyncStrategy: model.SyncStrategy_QUICK_SYNC,
+				Summary:      "Triggered by web console",
+				Stages: []*model.PipelineStage{
+					{
+						Id:      "plugin-1-stage-1",
+						Visible: true,
+					},
+				},
+				Versions: []*model.ArtifactVersion{
+					{
+						Kind:    model.ArtifactVersion_UNKNOWN,
+						Version: versionUnknown,
+					},
+				},
+			},
+		},
+		{
+			name:          "pipeline sync strategy triggered by web console",
+			isFirstDeploy: false,
+			plugins: []pluginapi.PluginClient{
+				&fakePlugin{
+					pipelineStages: []*model.PipelineStage{
+						{
+							Id:      "plugin-1-stage-1",
+							Name:    "plugin-1-stage-1",
+							Visible: true,
+						},
+					},
+				},
+			},
+			cfg: &config.GenericApplicationSpec{
+				Planner: config.DeploymentPlanner{
+					AutoRollback: pointerBool(true),
+				},
+				Pipeline: &config.DeploymentPipeline{
+					Stages: []config.PipelineStage{
+						{
+							ID:   "plugin-1-stage-1",
+							Name: "plugin-1-stage-1",
+						},
+					},
+				},
+			},
+			deployment: &model.Deployment{
+				Trigger: &model.DeploymentTrigger{
+					SyncStrategy:    model.SyncStrategy_PIPELINE,
+					StrategySummary: "Triggered by web console",
+				},
+			},
+			wantErr: false,
+			expectedOutput: &plannerOutput{
+				SyncStrategy: model.SyncStrategy_PIPELINE,
+				Summary:      "Triggered by web console",
+				Stages: []*model.PipelineStage{
+					{
+						Id:      "plugin-1-stage-1",
+						Name:    "plugin-1-stage-1",
+						Index:   0,
+						Visible: true,
+					},
+				},
+				Versions: []*model.ArtifactVersion{
+					{
+						Kind:    model.ArtifactVersion_UNKNOWN,
+						Version: versionUnknown,
+					},
+				},
+			},
+		},
+		{
+			name:          "quick sync due to no pipeline configured",
+			isFirstDeploy: false,
+			plugins: []pluginapi.PluginClient{
+				&fakePlugin{
+					quickStages: []*model.PipelineStage{
+						{
+							Id:      "plugin-1-stage-1",
+							Visible: true,
+						},
+					},
+				},
+			},
+			cfg: &config.GenericApplicationSpec{
+				Planner: config.DeploymentPlanner{
+					AutoRollback: pointerBool(true),
+				},
+			},
+			deployment: &model.Deployment{
+				Trigger: &model.DeploymentTrigger{},
+			},
+			wantErr: false,
+			expectedOutput: &plannerOutput{
+				SyncStrategy: model.SyncStrategy_QUICK_SYNC,
+				Summary:      "Quick sync due to the pipeline was not configured",
+				Stages: []*model.PipelineStage{
+					{
+						Id:      "plugin-1-stage-1",
+						Visible: true,
+					},
+				},
+				Versions: []*model.ArtifactVersion{
+					{
+						Kind:    model.ArtifactVersion_UNKNOWN,
+						Version: versionUnknown,
+					},
+				},
+			},
+		},
+		{
+			name:          "pipeline sync due to alwaysUsePipeline",
+			isFirstDeploy: false,
+			plugins: []pluginapi.PluginClient{
+				&fakePlugin{
+					pipelineStages: []*model.PipelineStage{
+						{
+							Id:      "plugin-1-stage-1",
+							Name:    "plugin-1-stage-1",
+							Visible: true,
+						},
+					},
+				},
+			},
+			cfg: &config.GenericApplicationSpec{
+				Planner: config.DeploymentPlanner{
+					AlwaysUsePipeline: true,
+					AutoRollback:      pointerBool(true),
+				},
+				Pipeline: &config.DeploymentPipeline{
+					Stages: []config.PipelineStage{
+						{
+							ID:   "plugin-1-stage-1",
+							Name: "plugin-1-stage-1",
+						},
+					},
+				},
+			},
+			deployment: &model.Deployment{
+				Trigger: &model.DeploymentTrigger{},
+			},
+			wantErr: false,
+			expectedOutput: &plannerOutput{
+				SyncStrategy: model.SyncStrategy_PIPELINE,
+				Summary:      "Sync with the specified pipeline (alwaysUsePipeline was set)",
+				Stages: []*model.PipelineStage{
+					{
+						Id:      "plugin-1-stage-1",
+						Name:    "plugin-1-stage-1",
+						Index:   0,
+						Visible: true,
+					},
+				},
+				Versions: []*model.ArtifactVersion{
+					{
+						Kind:    model.ArtifactVersion_UNKNOWN,
+						Version: versionUnknown,
+					},
+				},
+			},
+		},
+		{
+			name:          "quick sync due to first deployment",
+			isFirstDeploy: true,
+			plugins: []pluginapi.PluginClient{
+				&fakePlugin{
+					quickStages: []*model.PipelineStage{
+						{
+							Id:      "plugin-1-stage-1",
+							Visible: true,
+						},
+					},
+				},
+			},
+			cfg: &config.GenericApplicationSpec{
+				Planner: config.DeploymentPlanner{
+					AutoRollback: pointerBool(true),
+				},
+				Pipeline: &config.DeploymentPipeline{
+					Stages: []config.PipelineStage{
+						{
+							ID:   "plugin-1-stage-1",
+							Name: "plugin-1-stage-1",
+						},
+					},
+				},
+			},
+			deployment: &model.Deployment{
+				Trigger: &model.DeploymentTrigger{},
+			},
+			wantErr: false,
+			expectedOutput: &plannerOutput{
+				SyncStrategy: model.SyncStrategy_QUICK_SYNC,
+				Summary:      "Quick sync, it seems this is the first deployment of the application",
+				Stages: []*model.PipelineStage{
+					{
+						Id:      "plugin-1-stage-1",
+						Visible: true,
+					},
+				},
+				Versions: []*model.ArtifactVersion{
+					{
+						Kind:    model.ArtifactVersion_UNKNOWN,
+						Version: versionUnknown,
+					},
+				},
+			},
+		},
+		{
+			name:          "pipeline sync determined by plugin",
+			isFirstDeploy: false,
+			plugins: []pluginapi.PluginClient{
+				&fakePlugin{
+					syncStrategy: &deployment.DetermineStrategyResponse{
+						SyncStrategy: model.SyncStrategy_PIPELINE,
+						Summary:      "determined by plugin",
+					},
+					pipelineStages: []*model.PipelineStage{
+						{
+							Id:      "plugin-1-stage-1",
+							Name:    "plugin-1-stage-1",
+							Visible: true,
+						},
+					},
+					quickStages: []*model.PipelineStage{
+						{
+							Id:      "plugin-1-quick-stage-1",
+							Visible: true,
+						},
+					},
+				},
+			},
+			cfg: &config.GenericApplicationSpec{
+				Planner: config.DeploymentPlanner{
+					AutoRollback: pointerBool(true),
+				},
+				Pipeline: &config.DeploymentPipeline{
+					Stages: []config.PipelineStage{
+						{
+							ID:   "plugin-1-stage-1",
+							Name: "plugin-1-stage-1",
+						},
+					},
+				},
+			},
+			deployment: &model.Deployment{
+				Trigger: &model.DeploymentTrigger{},
+			},
+			wantErr: false,
+			expectedOutput: &plannerOutput{
+				SyncStrategy: model.SyncStrategy_PIPELINE,
+				Summary:      "determined by plugin",
+				Stages: []*model.PipelineStage{
+					{
+						Id:      "plugin-1-stage-1",
+						Name:    "plugin-1-stage-1",
+						Index:   0,
+						Visible: true,
+					},
+				},
+				Versions: []*model.ArtifactVersion{
+					{
+						Kind:    model.ArtifactVersion_UNKNOWN,
+						Version: versionUnknown,
+					},
+				},
+			},
+		},
+	}
+
+	for _, tc := range testcases {
+		t.Run(tc.name, func(t *testing.T) {
+			stageBasedPluginMap := make(map[string]pluginapi.PluginClient)
+			for _, p := range tc.plugins {
+				stages, _ := p.FetchDefinedStages(context.TODO(), &deployment.FetchDefinedStagesRequest{})
+				for _, s := range stages.Stages {
+					stageBasedPluginMap[s] = p
+				}
+			}
+			planner := &planner{
+				plugins:                      tc.plugins,
+				stageBasedPluginsMap:         stageBasedPluginMap,
+				deployment:                   tc.deployment,
+				lastSuccessfulCommitHash:     "",
+				lastSuccessfulConfigFilename: "",
+				workingDir:                   "",
+				apiClient:                    nil,
+				gitClient:                    nil,
+				notifier:                     nil,
+				logger:                       zap.NewNop(),
+				nowFunc:                      func() time.Time { return time.Now() },
+			}
+
+			if !tc.isFirstDeploy {
+				planner.lastSuccessfulCommitHash = "123"
+			}
+
+			runningDS := &model.DeploymentSource{}
+
+			type genericConfig struct {
+				Kind       config.Kind `json:"kind"`
+				APIVersion string      `json:"apiVersion,omitempty"`
+				Spec       any         `json:"spec"`
+			}
+
+			jsonBytes, err := json.Marshal(genericConfig{
+				Kind:       config.KindApplication,
+				APIVersion: config.VersionV1Beta1,
+				Spec:       tc.cfg,
+			})
+
+			require.NoError(t, err)
+			targetDS := &model.DeploymentSource{
+				ApplicationConfig: jsonBytes,
+			}
+			out, err := planner.buildPlan(context.TODO(), runningDS, targetDS)
+			if tc.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+			}
+			assert.Equal(t, tc.expectedOutput, out)
 		})
 	}
 }

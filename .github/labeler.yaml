@@ -34,4 +34,6 @@ area/tool:
 
 # area/only-pipedv1:
 area/pipedv1:
-- any: ['pkg/app/pipedv1/**/*', 'pkg/plugin/**/*', 'cmd/pipedv1/**/*']
+- pkg/app/pipedv1/**/*
+- pkg/configv1/*
+- pkg/configv1/**/*
