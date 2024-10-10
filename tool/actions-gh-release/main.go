@@ -116,6 +116,9 @@ func main() {
 		newProposals = append(newProposals, p)
 	}
 
+	fmt.Printf("[DEBUG] newProposals x%d: %v\n", len(newProposals), newProposals)
+	fmt.Printf("[DEBUG] existingProposals x%d: %v\n", len(existingProposals), existingProposals)
+
 	notify := func() (*github.IssueComment, error) {
 		body := makeCommentBody(newProposals, existingProposals)
 		return ghClient.sendComment(ctx, event.Owner, event.Repo, event.PRNumber, body)
