@@ -168,17 +168,17 @@ func buildReleaseProposal(ctx context.Context, ghClient *githubClient, releaseFi
 		return nil, err
 	}
 
-	fmt.Printf("[DEBUG] baseCfg.Tag: %s\n", baseCfg.Tag)
+	log.Printf("[DEBUG] baseCfg.Tag: %s\n", baseCfg.Tag)
 
 	// List all commits from the last release until now.
 	{
 		_revisions := fmt.Sprintf("%s...%s", event.BaseCommit, event.HeadCommit)
-		fmt.Printf("[DEBUG] _revisions: %s\n", _revisions)
+		log.Printf("[DEBUG] _revisions: %s\n", _revisions)
 		_commits, err := listCommits(ctx, gitExecPath, repoDir, _revisions)
 		if err != nil {
-			fmt.Printf("[DEBUG] _err: %v\n", err)
+			log.Printf("[DEBUG] _err: %v\n", err)
 		}
-		fmt.Printf("[DEBUG] _commits: %v\n", _commits)
+		log.Printf("[DEBUG] _commits: %v\n", _commits)
 	}
 
 	// List all commits from the last release until now.
