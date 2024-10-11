@@ -1,0 +1,16 @@
+# This is the config for "Generate release notes".
+# See https://docs.github.com/en/repositories/releasing-projects-on-github/automatically-generated-release-notes for details.
+changelog:
+  categories:
+    - title: Breaking Changes
+      labels:
+        - change-category/breaking-change
+    - title: New Features
+      labels:
+        - change-category/new-feature
+    - title: Notable Changes
+      labels:
+        - change-category/notable-change
+    - title: Internal Changes
+      labels:
+        - "*"
