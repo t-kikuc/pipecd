@@ -1,0 +1,37 @@
+name: '[DEBUG] Create GitHub Release'
+description: 'Create new releases when any specified RELEASE files were modified.'
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches:
+      - master
+    paths:
+      - 'RELEASE'
+
+# inputs:
+#   release_file:
+#     description: 'The path to the RELEASE file or pattern to match one or multiple RELEASE files. Default is RELEASE.'
+#     required: false
+#     default: 'RELEASE'
+#   token:
+#     description: 'The GITHUB_TOKEN secret.'
+#     required: true
+#   output_releases_file_path:
+#     description: 'The path to output the list of releases formatted in JSON.'
+#     required: false
+
+# outputs:
+#   releases:
+#     description: 'The list of releases formatted in JSON.'
+
+jobs:
+  run-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: run1
+        shell: bash
+        run: cd tool/actions-gh-release; go run main.go
+          # - release-file=${{ inputs.release_file }}
+          # - token=${{ inputs.token }}
+          # - output-releases-file-path=${{ inputs.output_releases_file_path }}
