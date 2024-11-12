@@ -109,11 +109,11 @@ About [Homebrew](https://brew.sh/)
 
 ### Run in Docker container
 
-We are storing every version of docker image for pipectl on Google Cloud Container Registry.
+We are storing every version of docker image for pipectl on GitHub Container Registry.
 Available versions are [here](https://github.com/pipe-cd/pipecd/releases).
 
 ```
-docker run --rm gcr.io/pipecd/pipectl:{VERSION} -h
+docker run --rm ghcr.io/pipe-cd/pipectl:{VERSION} -h
 ```
 
 ## Authentication
@@ -327,6 +327,8 @@ pipectl event register \
     --name=example-image-pushed \
     --data=gcr.io/pipecd/example:v0.1.0
 ```
+
+See more on [usage of Event Watcher](./event-watcher.md).
 
 ### Encrypting the data you want to use when deploying
 

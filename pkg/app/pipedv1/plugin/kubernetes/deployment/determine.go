@@ -20,6 +20,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
+	"github.com/pipe-cd/pipecd/pkg/app/pipedv1/plugin/kubernetes/config"
 	"github.com/pipe-cd/pipecd/pkg/app/pipedv1/plugin/kubernetes/provider"
 	"github.com/pipe-cd/pipecd/pkg/model"
 )
@@ -88,4 +89,70 @@ func determineVersions(manifests []provider.Manifest) ([]*model.ArtifactVersion,
 	}
 
 	return versions, nil
+}
+
+// findManifests returns the manifests that have the specified kind and name.
+func findManifests(kind, name string, manifests []provider.Manifest) []provider.Manifest {
+	out := make([]provider.Manifest, 0, len(manifests))
+	for _, m := range manifests {
+		if m.Body.GetKind() != kind {
+			continue
+		}
+		if name != "" && m.Body.GetName() != name {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// findWorkloadManifests returns the manifests that have the specified references.
+// the default kind is Deployment if it is not specified.
+func findWorkloadManifests(manifests []provider.Manifest, refs []config.K8sResourceReference) []provider.Manifest {
+	if len(refs) == 0 {
+		return findManifests(provider.KindDeployment, "", manifests)
+	}
+
+	workloads := make([]provider.Manifest, 0)
+	for _, ref := range refs {
+		kind := provider.KindDeployment
+		if ref.Kind != "" {
+			kind = ref.Kind
+		}
+		ms := findManifests(kind, ref.Name, manifests)
+		workloads = append(workloads, ms...)
+	}
+	return workloads
+}
+
+type workloadPair struct {
+	old provider.Manifest
+	new provider.Manifest
+}
+
+func findUpdatedWorkloads(olds, news []provider.Manifest) []workloadPair {
+	pairs := make([]workloadPair, 0)
+	oldMap := make(map[provider.ResourceKey]provider.Manifest, len(olds))
+	nomalizeKey := func(k provider.ResourceKey) provider.ResourceKey {
+		// Ignoring APIVersion because user can upgrade to the new APIVersion for the same workload.
+		k.APIVersion = ""
+		if k.Namespace == provider.DefaultNamespace {
+			k.Namespace = ""
+		}
+		return k
+	}
+	for _, m := range olds {
+		key := nomalizeKey(m.Key)
+		oldMap[key] = m
+	}
+	for _, n := range news {
+		key := nomalizeKey(n.Key)
+		if o, ok := oldMap[key]; ok {
+			pairs = append(pairs, workloadPair{
+				old: o,
+				new: n,
+			})
+		}
+	}
+	return pairs
 }

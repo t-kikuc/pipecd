@@ -60,7 +60,7 @@ func TestChangedFiles(t *testing.T) {
 	err = os.WriteFile(readmeFilePath, []byte("new content"), os.ModePerm)
 	require.NoError(t, err)
 
-	err = r.addCommit(ctx, "Added new file")
+	err = r.addCommit(ctx, "Added new file", nil)
 	require.NoError(t, err)
 
 	headCommit, err := r.GetCommitForRev(ctx, "HEAD")
@@ -105,16 +105,17 @@ func TestAddCommit(t *testing.T) {
 	err = os.WriteFile(path, []byte("content"), os.ModePerm)
 	require.NoError(t, err)
 
-	err = r.addCommit(ctx, "Added new file")
+	err = r.addCommit(ctx, "Added new file", map[string]string{"Test-Hoge": "fuga"})
 	require.NoError(t, err)
 
-	err = r.addCommit(ctx, "No change")
+	err = r.addCommit(ctx, "No change", nil)
 	require.Equal(t, ErrNoChange, err)
 
 	commits, err = r.ListCommits(ctx, "")
 	require.NoError(t, err)
 	require.Equal(t, 2, len(commits))
 	assert.Equal(t, "Added new file", commits[0].Message)
+	assert.Equal(t, "Test-Hoge: fuga", commits[0].Body)
 }
 
 func TestCommitChanges(t *testing.T) {
@@ -143,17 +144,35 @@ func TestCommitChanges(t *testing.T) {
 		"README.md":     []byte("new-readme"),
 		"a/b/c/new.txt": []byte("new-hello"),
 	}
-	err = r.CommitChanges(ctx, "new-branch", "New commit with changes", true, changes)
+	err = r.CommitChanges(ctx, "new-branch", "New commit with changes", true, changes, nil)
 	require.NoError(t, err)
 
 	commits, err = r.ListCommits(ctx, "")
 	require.NoError(t, err)
 	require.Equal(t, 2, len(commits))
 	assert.Equal(t, "New commit with changes", commits[0].Message)
+	assert.Equal(t, "", commits[0].Body)
 
+	// Commit with trailers
+	trailers := map[string]string{
+		"test": "hoge",
+	}
+	changes2 := map[string][]byte{
+		"README.md": []byte("new-readme2"),
+	}
+	err = r.CommitChanges(ctx, "new-branch2", "New commit with changes and trailers", true, changes2, trailers)
+	require.NoError(t, err)
+
+	commits, err = r.ListCommits(ctx, "")
+	require.NoError(t, err)
+	require.Equal(t, 3, len(commits))
+	assert.Equal(t, "New commit with changes and trailers", commits[0].Message)
+	assert.Equal(t, "test: hoge", commits[0].Body)
+
+	// Check the content of the latest commit
 	bytes, err := os.ReadFile(filepath.Join(r.dir, "README.md"))
 	require.NoError(t, err)
-	assert.Equal(t, string(changes["README.md"]), string(bytes))
+	assert.Equal(t, string(changes2["README.md"]), string(bytes))
 
 	bytes, err = os.ReadFile(filepath.Join(r.dir, "a/b/c/new.txt"))
 	require.NoError(t, err)
@@ -277,4 +296,69 @@ func TestGetCommitForRev(t *testing.T) {
 	commit, err := r.GetCommitForRev(ctx, "HEAD")
 	require.NoError(t, err)
 	assert.Equal(t, commits[0].Hash, commit.Hash)
+}
+
+func TestCleanPath(t *testing.T) {
+	faker, err := newFaker()
+	require.NoError(t, err)
+	defer faker.clean()
+
+	var (
+		org      = "test-repo-org"
+		repoName = "repo-clean-path"
+		ctx      = context.Background()
+	)
+
+	err = faker.makeRepo(org, repoName)
+	require.NoError(t, err)
+	r := &repo{
+		dir:     faker.repoDir(org, repoName),
+		gitPath: faker.gitPath,
+	}
+
+	// create two directories and a file in each
+	// repo-clean-path/part1/new-file.txt
+	// repo-clean-path/part2/new-file.txt
+	dirs := []string{"part1", "part2"}
+	for _, dir := range dirs {
+		partDir := filepath.Join(r.dir, dir)
+		err = os.MkdirAll(partDir, os.ModePerm)
+		require.NoError(t, err)
+
+		path := filepath.Join(partDir, "new-file.txt")
+		err = os.WriteFile(path, []byte("content"), os.ModePerm)
+		require.NoError(t, err)
+	}
+
+	// create other dir outside the repo
+	// repo-clean-path/outside-dir/new-file.txt
+	outsideDir := filepath.Join(r.dir, "..", "outside-dir")
+	require.NoError(t, err)
+
+	err = os.MkdirAll(outsideDir, os.ModePerm)
+	require.NoError(t, err)
+
+	path := filepath.Join(outsideDir, "new-file.txt")
+	err = os.WriteFile(path, []byte("content"), os.ModePerm)
+	require.NoError(t, err)
+
+	// clean the repo-dir/part1
+	err = r.CleanPath(ctx, "part1")
+	require.NoError(t, err)
+
+	// check the repo-dir/part1 is removed
+	_, err = os.Stat(filepath.Join(r.dir, "part1"))
+	assert.True(t, os.IsNotExist(err))
+
+	// check the repo-dir/part2 is still there
+	_, err = os.Stat(filepath.Join(r.dir, "part2"))
+	assert.NoError(t, err)
+
+	// check the outside dir can't be cleaned with relative path
+	err = r.CleanPath(ctx, "../outside-dir")
+	require.Error(t, err)
+
+	// check the outside dir can't be cleaned with relative path
+	err = r.CleanPath(ctx, outsideDir)
+	require.Error(t, err)
 }

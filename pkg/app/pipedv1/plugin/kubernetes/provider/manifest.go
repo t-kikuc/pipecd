@@ -18,7 +18,7 @@ import "k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 
 // Manifest represents a Kubernetes resource manifest.
 type Manifest struct {
-	// TODO: define ResourceKey and add as a field here.
+	Key ResourceKey
 	Body *unstructured.Unstructured
 }
 
