@@ -29,11 +29,17 @@ jobs:
   run-release:
     runs-on: ubuntu-latest
     steps:
-      - name: run1
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: run go
         shell: bash
         # working-directory: tool/actions-gh-release
-        run: ls; pwd; 
-        # run: go run main.go
+        run: |
+          ls 
+          pwd
+          cd tool/actions-gh-release
+          go run main.go
           # - release-file=${{ inputs.release_file }}
           # - token=${{ inputs.token }}
           # - output-releases-file-path=${{ inputs.output_releases_file_path }}
