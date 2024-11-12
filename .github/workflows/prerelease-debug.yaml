@@ -31,7 +31,8 @@ jobs:
     steps:
       - name: run1
         shell: bash
-        run: cd tool/actions-gh-release; go run main.go
+        working-directory: tool/actions-gh-release
+        run: go run main.go
           # - release-file=${{ inputs.release_file }}
           # - token=${{ inputs.token }}
           # - output-releases-file-path=${{ inputs.output_releases_file_path }}
